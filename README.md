@@ -1,7 +1,7 @@
 <img width="2172" height="724" alt="0b31a5f4-f61b-43de-9567-c8fdcf2333f5" src="https://github.com/user-attachments/assets/2e6c8bd0-0319-4265-acb3-4eacad746597" />
 
 
-## Установка в один клин
+## Установка в один клик
 
 
 ```sh
