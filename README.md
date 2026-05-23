@@ -2,6 +2,8 @@
 
 `wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes`
 
+
+
 **Включить родительский контроль**
 
 ```
@@ -11,6 +13,8 @@ rm -f /tmp/podkop_tg_access_devices.cache
 rm -f /tmp/podkop_tg_access_last
 /etc/init.d/podkop-telegram-agent restart
 ```
+
+
 
 **Полностью удалить бота**
 
@@ -39,6 +43,8 @@ rm -rf /tmp/podkop_tg_* /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-*ca
 /etc/init.d/rpcd restart 2>/dev/null
 /etc/init.d/uhttpd restart 2>/dev/null
 ```
+
+
 
 **Проверить, что удалилось**
 
