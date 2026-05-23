@@ -1,13 +1,11 @@
 <img width="2172" height="724" alt="0b31a5f4-f61b-43de-9567-c8fdcf2333f5" src="https://github.com/user-attachments/assets/2e6c8bd0-0319-4265-acb3-4eacad746597" />
 
-# Podkop Telegram Agent
 
 Telegram-бот для управления **Podkop / OpenWrt** прямо из Telegram.
 
-Бот работает отдельной службой OpenWrt и управляется через UCI
 
+## Установка в один клин
 
-## Установить
 ```sh
 wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
 ```
