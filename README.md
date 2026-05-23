@@ -1,160 +1,29 @@
 # Podkop Telegram Agent
 
-<p align="center">
-  <b>Telegram-бот для управления Podkop / OpenWrt</b>
-</p>
+Telegram-бот для управления **Podkop / OpenWrt** прямо из Telegram.
 
-<p align="center">
-  Статус, отчёты, логи, backup, родительский контроль, URLTest/VLESS и обновление Podkop прямо из Telegram.
-</p>
-
-<p align="center">
-  <img src="images/banner.png" alt="Podkop Telegram Agent" width="100%">
-</p>
-
----
-
-## Описание
-
-**Podkop Telegram Agent** — это Telegram-модуль для OpenWrt.
-
-Агент работает отдельной службой и управляется через UCI-конфиг:
+Бот работает отдельной службой OpenWrt и управляется через UCI:
 
 ```sh
 /etc/config/podkop_tg
 ```
 
-Проект создан для удобного управления роутером, Podkop и sing-box прямо из Telegram.
-
-Бот не редактирует напрямую `sing-box config` и не изменяет `PodkopTable`.
-
 ---
 
-## Основные функции
+## Возможности
 
-### Управление Podkop
-
-- статус Podkop и sing-box;
-- перезапуск Podkop;
-- обновление Podkop из Telegram;
-- глобальная диагностика;
-- проверка DNS, nft, routing, FakeIP;
-- работа с proxy-ссылками через UCI.
-
-### Статус и отчёты
-
-Бот показывает:
-
-- модель роутера;
-- версию OpenWrt;
-- kernel;
-- uptime;
-- температуру;
-- RAM / SWAP / Flash;
-- WAN IP;
-- ping;
-- Wi-Fi;
-- клиентов;
-- версии Podkop, sing-box и самого бота.
-
-### Логи из Telegram
-
-Доступен просмотр логов:
-
-```text
-/logs ROUTER
-/logs ROUTER errors
-/logs ROUTER podkop
-/logs ROUTER singbox
-/logs ROUTER nft
-/logs ROUTER dns
-```
-
-### Родительский контроль
-
-Раздел:
-
-```text
-👨‍👩‍👧 Родительский Контроль
-```
-
-Возможности:
-
-- список статических DHCP-устройств;
-- отображение имени, MAC и IPv4;
-- ручная блокировка устройства;
-- разблокировка устройства;
-- ограничение по расписанию;
-- список активных блокировок;
-- блокировка трафика даже через Podkop / sing-box.
-
-Пример:
-
-```text
-/accessblock WBR3000UAX 192.168.2.146
-/accessunblock WBR3000UAX 192.168.2.146
-/accessset WBR3000UAX 192.168.2.146 14:00-20:00 mon-fri
-```
-
-### URLTest / VLESS
-
-Раздел:
-
-```text
-🔗 URLTest / VLESS
-```
-
-Возможности:
-
-- вывод VLESS/proxy-ссылок из Podkop;
-- отображение имени сервера, host и port;
-- проверка доступности сервера;
-- добавление новой ссылки;
-- удаление ссылки;
-- применение выбранной ссылки;
-- возврат секции в URLTest.
-
-Пример:
-
-```text
-/urltest WBR3000UAX
-/urlping WBR3000UAX
-/urluse WBR3000UAX 1
-/urladd WBR3000UAX main vless://...
-```
-
-### Backup OpenWrt
-
-Бот умеет создавать backup роутера и отправлять архив в Telegram.
-
-```text
-/backup WBR3000UAX
-```
-
-### Уведомления
-
-Бот может присылать уведомления:
-
-- WAN DOWN / UP;
-- Internet DOWN / UP;
-- Podkop DOWN / UP;
-- sing-box DOWN / UP;
-- reboot роутера;
-- restart Podkop.
-
-### Multi-router
-
-Поддерживается управление несколькими роутерами.
-
-Один роутер может быть `panel`, остальные — `worker`.
-
-```sh
-uci set podkop_tg.main.bot_mode='panel'
-uci set podkop_tg.main.router_name='WBR3000UAX'
-uci set podkop_tg.main.router_list='WBR3000UAX AX3000T NanoPiR3S'
-uci commit podkop_tg
-/etc/init.d/podkop-telegram-agent restart
-```
+- 🟢 статус роутера, Podkop и sing-box;
+- 📊 расширенный отчёт по системе;
+- 📄 просмотр логов из Telegram;
+- 🌐 глобальная диагностика Podkop;
+- 🔄 перезапуск Podkop и reboot роутера;
+- 📦 backup OpenWrt в Telegram;
+- 👨‍👩‍👧 родительский контроль устройств;
+- 🔗 управление URLTest / VLESS ссылками;
+- ⬆️ обновление Podkop;
+- 🤖 обновление самого бота;
+- 🖥️ LuCI-страница настроек;
+- 🔀 multi-router режим panel / worker.
 
 ---
 
@@ -172,6 +41,53 @@ uci commit podkop_tg
 ⬆️ Обновить Podkop
 🤖 Обновить Бота
 ❓ Помощь
+```
+
+---
+
+## Родительский контроль
+
+Бот видит статические DHCP-устройства:
+
+```text
+Имя хоста
+MAC-адрес
+IPv4-адрес
+online / offline
+```
+
+Можно:
+
+```text
+заблокировать устройство
+разблокировать устройство
+задать расписание
+посмотреть активные блокировки
+```
+
+Блокировка работает даже если трафик идёт через **Podkop / sing-box**.
+
+---
+
+## URLTest / VLESS
+
+Бот умеет работать с proxy-ссылками Podkop:
+
+```text
+urltest_proxy_links
+selector_proxy_links
+proxy_string
+```
+
+Можно:
+
+```text
+посмотреть все ссылки
+проверить доступность сервера
+добавить VLESS
+удалить ссылку
+применить выбранную ссылку
+вернуть секцию в URLTest
 ```
 
 ---
@@ -216,16 +132,35 @@ uci commit podkop_tg
 
 ---
 
-## Включить родительский контроль
+## Структура проекта
 
-```sh
-uci set podkop_tg.main.device_control='1'
-uci commit podkop_tg
-
-rm -f /tmp/podkop_tg_access_devices.cache
-rm -f /tmp/podkop_tg_access_last
-
-/etc/init.d/podkop-telegram-agent restart
+```text
+podkop-telegram-agent/
+├── install.sh
+├── online-install.sh
+├── podkop-telegram-agent-github-release.tar.gz
+├── podkop-telegram-agent-github-release.zip
+├── podkop-telegram-agent-github-release.sha256
+├── README.md
+└── files/
+    ├── usr/
+    │   └── bin/
+    │       ├── podkop-telegram-agent
+    │       └── podkop-telegram-agent-logread
+    ├── etc/
+    │   ├── init.d/
+    │   │   └── podkop-telegram-agent
+    │   ├── config/
+    │   │   └── podkop_tg
+    │   └── podkop-telegram-agent/
+    │       └── header.jpg
+    ├── usr/share/
+    │   ├── luci/menu.d/
+    │   │   └── luci-app-podkop-tg.json
+    │   └── rpcd/acl.d/
+    │       └── luci-app-podkop-tg.json
+    └── www/luci-static/resources/view/podkop-tg/
+        └── settings.js
 ```
 
 ---
@@ -235,11 +170,7 @@ rm -f /tmp/podkop_tg_access_last
 ```sh
 /etc/init.d/podkop-telegram-agent status
 uci show podkop_tg | sed "s/token='[^']*'/token='***'/"
-```
 
-Логи:
-
-```sh
 logread -e podkop-telegram-agent | tail -n 160
 logread -e podkop | tail -n 80
 logread -e sing-box | tail -n 80
@@ -254,11 +185,8 @@ logread -e sing-box | tail -n 80
 /etc/init.d/podkop-telegram-agent disable 2>/dev/null
 
 rm -f /etc/init.d/podkop-telegram-agent
-rm -f /etc/rc.d/*podkop-telegram-agent*
-
 rm -f /usr/bin/podkop-telegram-agent
 rm -f /usr/bin/podkop-telegram-agent-logread
-
 rm -f /etc/config/podkop_tg
 rm -rf /etc/podkop-telegram-agent
 
