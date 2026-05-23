@@ -8,6 +8,12 @@
 wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
 ```
 
+## Удаление одной командой
+
+```sh
+wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/uninstall.sh | ash -s -- --yes
+```
+
 
 ## Возможности
 
