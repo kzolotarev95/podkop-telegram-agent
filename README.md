@@ -4,13 +4,13 @@
 
 Telegram-бот для управления **Podkop / OpenWrt** прямо из Telegram.
 
-Бот работает отдельной службой OpenWrt и управляется через UCI:
+Бот работает отдельной службой OpenWrt и управляется через UCI
 
+
+## Установить
 ```sh
-/etc/config/podkop_tg
+wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
 ```
-
----
 
 ## Возможности
 
@@ -92,47 +92,6 @@ proxy_string
 вернуть секцию в URLTest
 ```
 
----
-
-## Установка
-
-### OpenWrt 24
-
-```sh
-opkg update
-opkg install curl jq ca-bundle unzip tar gzip rpcd-mod-file iwinfo
-```
-
-### OpenWrt 25
-
-```sh
-apk update
-apk add curl jq ca-bundle tar gzip rpcd-mod-file iwinfo
-```
-
-### Установить / обновить
-
-```sh
-wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
-```
-
----
-
-## Первичная настройка
-
-```sh
-uci set podkop_tg.main.enabled='1'
-uci set podkop_tg.main.token='TELEGRAM_BOT_TOKEN'
-uci set podkop_tg.main.chat_id='TELEGRAM_USER_ID'
-uci set podkop_tg.main.router_name='WBR3000UAX'
-uci set podkop_tg.main.podkop_section='main'
-uci commit podkop_tg
-
-/etc/init.d/podkop-telegram-agent enable
-/etc/init.d/podkop-telegram-agent restart
-```
-
----
 
 ## Структура проекта
 
