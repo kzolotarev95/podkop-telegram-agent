@@ -1,6 +1,6 @@
 **Установить / обновить бота одной командой**
 
-`wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/online-install.sh | ash -s -- --yes`
+`wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes`
 
 **Включить родительский контроль**
 
