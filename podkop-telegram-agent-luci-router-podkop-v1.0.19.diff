@@ -1,0 +1,327 @@
+diff -ruN /tmp/base119/podkop-telegram-agent/files/etc/config/podkop_tg /tmp/fix119/podkop-telegram-agent/files/etc/config/podkop_tg
+--- /tmp/base119/podkop-telegram-agent/files/etc/config/podkop_tg	2026-05-22 18:45:03.000000000 +0000
++++ /tmp/fix119/podkop-telegram-agent/files/etc/config/podkop_tg	2026-05-23 17:02:09.655836331 +0000
+@@ -5,6 +5,7 @@
+         option router_name ''
+         option bot_mode 'standalone'
+         option router_list ''
++        option router_aliases ''
+         option podkop_section 'main'
+         option poll_timeout '25'
+         option check_interval '60'
+diff -ruN /tmp/base119/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent /tmp/fix119/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+--- /tmp/base119/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-23 00:15:41.000000000 +0000
++++ /tmp/fix119/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-23 17:01:07.751010211 +0000
+@@ -2,8 +2,8 @@
+ # podkop-telegram-agent
+ # Lightweight Telegram sidecar for Podkop/OpenWrt.
+ # Dependencies: ash, curl, jq, uci, logread.
+-# DEVICE_ACCESS_V115: fast parental control UI, cached static DHCP list, no heavy firewall rebuild on view buttons, active-blocks optimized, bot version v1.0.7.
+-BOT_VERSION="v1.0.7"
++# LUCIPODKOP_V119: LuCI version display, router-name autodetect/aliases, OpenWrt 25 apk Podkop version detection, bot version v1.0.8.
++BOT_VERSION="v1.0.8"
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+@@ -46,12 +46,19 @@
+     PANEL_SEND_HEADER_ON_ACTIONS="$(uci -q get "$CONFIG.$SECTION.panel_send_header_on_actions")"
+     ROUTER_LIST="$(uci -q get "$CONFIG.$SECTION.router_list")"
+     ROUTERS_LIST="$(uci -q get "$CONFIG.$SECTION.routers")"
++ROUTER_ALIASES="$(uci_config_list_values "$CONFIG" "$SECTION" router_aliases; uci -q get "$CONFIG.$SECTION.router_aliases" 2>/dev/null)"
+     ALERTS="$(uci -q get "$CONFIG.$SECTION.alerts")"
+     PING_HOST="$(uci -q get "$CONFIG.$SECTION.ping_host")"
+     FOREIGN_HOLD_SECONDS="$(uci -q get "$CONFIG.$SECTION.foreign_hold_seconds")"
+     DEVICE_CONTROL="$(uci -q get "$CONFIG.$SECTION.device_control")"
+ 
+     [ -z "$ENABLED" ] && ENABLED=1
++    if is_bad_router_name "$ROUTER_NAME"; then
++        local bad_router_name
++        bad_router_name="$ROUTER_NAME"
++        ROUTER_NAME="$(hostname 2>/dev/null)"
++        [ -n "$bad_router_name" ] && ROUTER_ALIASES="$ROUTER_ALIASES $bad_router_name"
++    fi
+     [ -z "$ROUTER_NAME" ] && ROUTER_NAME="$(hostname 2>/dev/null)"
+     [ -z "$ROUTER_NAME" ] && ROUTER_NAME="openwrt"
+     [ -z "$POLL_TIMEOUT" ] && POLL_TIMEOUT=25
+@@ -197,6 +204,39 @@
+ is_worker_mode() { [ "$BOT_MODE" = "worker" ]; }
+ is_standalone_mode() { [ "$BOT_MODE" = "standalone" ]; }
+ 
++is_bad_router_name() {
++    local n="$1" hn
++    [ -z "$n" ] && return 0
++    hn="$(hostname 2>/dev/null || true)"
++    case "$n" in
++        openwrt|OpenWrt|OPENWRT|o__nwrt|o--nwrt|o_nwrt|localhost|router|Router) return 0 ;;
++    esac
++    # If OpenWrt hostname is already real, prefer it over generic package defaults.
++    [ -n "$hn" ] && [ "$hn" != "OpenWrt" ] && [ "$hn" != "openwrt" ] && [ "$n" = "openwrt" ] && return 0
++    return 1
++}
++
++uci_config_list_values() {
++    local cfg="$1" sec="$2" opt="$3"
++    [ -n "$cfg" ] && [ -n "$sec" ] && [ -n "$opt" ] || return 1
++    uci -q show "$cfg.$sec.$opt" 2>/dev/null | sed -n "s/^$cfg\.$sec\.$opt='\(.*\)'$/\1/p"
++}
++
++router_aliases_normalized() {
++    printf '%s\n' "$ROUTER_ALIASES" | tr ',;\n\t' '    '
++}
++
++target_is_local_router() {
++    local t="$1" a
++    [ -z "$t" ] && return 1
++    [ "$t" = "$ROUTER_NAME" ] && return 0
++    for a in $(router_aliases_normalized); do
++        [ -n "$a" ] || continue
++        [ "$t" = "$a" ] && return 0
++    done
++    return 1
++}
++
+ known_routers() {
+     local list r seen out
+     list="$ROUTER_LIST $ROUTERS_LIST"
+@@ -1137,7 +1177,31 @@
+ 
+ podkop_pkg_version_raw() {
+     local pkg="$1" v
+-    v="$(opkg list-installed "$pkg" 2>/dev/null | awk '{print $3; exit}')"
++
++    if command -v opkg >/dev/null 2>&1; then
++        v="$(opkg list-installed "$pkg" 2>/dev/null | awk '{print $3; exit}')"
++    fi
++
++    if [ -z "$v" ] && command -v apk >/dev/null 2>&1; then
++        if apk info -e "$pkg" >/dev/null 2>&1; then
++            v="$(apk info -v "$pkg" 2>/dev/null | sed -n "s/^${pkg}-//p" | head -n 1)"
++            [ -z "$v" ] && v="installed"
++        fi
++    fi
++
++    # Some OpenWrt 25/SNAPSHOT builds install Podkop from shell installer and
++    # apk/opkg may not report the package. If service/UCI exists, do not show
++    # a false "not installed" in the Telegram report.
++    if [ -z "$v" ] && [ "$pkg" = "podkop" ]; then
++        if [ -x /etc/init.d/podkop ] || uci -q show podkop >/dev/null 2>&1 || command -v podkop >/dev/null 2>&1; then
++            v="installed"
++        fi
++    fi
++
++    if [ -z "$v" ] && [ "$pkg" = "sing-box" ]; then
++        command -v sing-box >/dev/null 2>&1 && v="installed"
++    fi
++
+     [ -z "$v" ] && v="not installed"
+     printf '%s' "$v"
+ }
+@@ -1145,6 +1209,7 @@
+ podkop_display_version() {
+     local v="$1"
+     [ -z "$v" ] && v="unknown"
++    [ "$v" = "installed" ] && { printf 'installed/version unknown'; return; }
+     [ "$v" = "not installed" ] && { printf '%s' "$v"; return; }
+     v="${v%%-r*}"
+     case "$v" in
+@@ -2925,12 +2990,12 @@
+     case "$cmd" in
+         /status|/restart|/rebootrouter|/podkopupdate|/logs|/report|/diag|/health|/check|/backup|/testreport|/dailytest|/testdaily|/donate|/access|/accesslist|/accesshelp|/accessblocked|/accessblocks|/blocked|/accessdevice|/accessset|/parental|/kids|/devicecontrol|/accessadd|/accessdel|/accessblock|/accessunblock|/accesson|/accessoff|/accessapply|/urltest|/vless|/servers|/urlhelp|/urlping|/urluse|/urlteston|/urladd|/urldel|/urlapply)
+             [ -z "$arg1" ] && return 0
+-            [ "$arg1" = "$ROUTER_NAME" ] && return 0
++            target_is_local_router "$arg1" && return 0
+             return 1
+             ;;
+         /update)
+             if valid_proxy_url "$arg1" || [ -z "$arg1" ]; then return 0; fi
+-            [ "$arg1" = "$ROUTER_NAME" ] && return 0
++            target_is_local_router "$arg1" && return 0
+             return 1
+             ;;
+         *) return 0 ;;
+@@ -2946,11 +3011,11 @@
+         /start|/help|/myid|/choose)
+             return 0 ;;
+         /status|/restart|/rebootrouter|/podkopupdate|/logs|/report|/diag|/health|/check|/backup|/testreport|/dailytest|/testdaily|/donate|/access|/accesslist|/accesshelp|/accessblocked|/accessblocks|/blocked|/accessdevice|/accessset|/parental|/kids|/devicecontrol|/accessadd|/accessdel|/accessblock|/accessunblock|/accesson|/accessoff|/accessapply|/urltest|/vless|/servers|/urlhelp|/urlping|/urluse|/urlteston|/urladd|/urldel|/urlapply)
+-            [ "$arg1" = "$ROUTER_NAME" ] && return 1
++            target_is_local_router "$arg1" && return 1
+             [ -z "$arg1" ] && return 0
+             return 1 ;;
+         /update)
+-            [ "$arg1" = "$ROUTER_NAME" ] && return 1
++            target_is_local_router "$arg1" && return 1
+             valid_proxy_url "$arg1" && return 0
+             [ -z "$arg1" ] && return 0
+             return 1 ;;
+diff -ruN /tmp/base119/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js /tmp/fix119/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+--- /tmp/base119/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-22 08:37:12.000000000 +0000
++++ /tmp/fix119/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-23 17:01:51.571246738 +0000
+@@ -1,4 +1,7 @@
+ 'use strict';
++
++var BOT_VERSION = 'v1.0.8';
++
+ 'require view';
+ 'require form';
+ 'require uci';
+@@ -130,6 +133,15 @@
+     });
+ }
+ 
++function badRouterName(name) {
++    return !name || /^(openwrt|o__nwrt|o--nwrt|o_nwrt|localhost|router)$/i.test(String(name));
++}
++
++function routerNameValue(section_id, hostname) {
++    var cur = uci.get('podkop_tg', section_id, 'router_name');
++    return badRouterName(cur) ? hostname : cur;
++}
++
+ return view.extend({
+     load: function() {
+         return Promise.all([
+@@ -153,7 +165,9 @@
+                 'target': '_blank',
+                 'rel': 'noopener noreferrer',
+                 'style': 'color: #e74c3c; font-weight: 700;'
+-            }, 'by zks95')
++            }, 'by zks95'),
++            E('br'),
++            E('small', { 'style': 'opacity:.72; font-size:11px;' }, _('Версия: Podkop Telegram Agent ') + BOT_VERSION)
+         ]));
+ 
+         s = m.section(form.NamedSection, 'main', 'bot', _('Настройки бота'));
+@@ -192,7 +206,7 @@
+         o.default = hostname;
+         o.rmempty = false;
+         o.cfgvalue = function(section_id) {
+-            return uci.get('podkop_tg', section_id, 'router_name') || hostname;
++            return routerNameValue(section_id, hostname);
+         };
+         o.validate = function(section_id, value) {
+             if (value && !/^[\x21-\x7E]+$/.test(value))
+@@ -210,15 +224,27 @@
+         o.description = _('Для одного Telegram token на нескольких роутерах: на одном роутере выберите «Главная панель», на остальных — «Worker». Тогда /start и общие кнопки отвечает только панель, а worker отвечает только на команды со своим именем роутера.');
+ 
+         o = s.option(form.Value, 'router_list', _('Роутеры в Telegram-панели'));
+-        o.placeholder = hostname + ' ROUTER2';
++        o.placeholder = hostname + ' ROUTER2 ROUTER3 ROUTER4';
+         o.rmempty = true;
+-        o.description = _('Список имён роутеров для выбора кнопками в режиме панели. Указывайте через пробел, запятую или точку с запятой. Имена должны совпадать с полем «Имя роутера» на каждом роутере.');
++        o.size = 96;
++        o.description = _('Список имён роутеров для выбора кнопками в режиме панели. Поле расширено для 10–20 роутеров. Разделители: пробел, запятая или точка с запятой. Если worker-роутер переименован, добавьте старое имя в поле «Алиасы старых имён роутера» на этом worker, либо обновите имя здесь.');
+         o.validate = function(section_id, value) {
+             if (value && !/^[A-Za-z0-9_.@#:-]+([,;\s]+[A-Za-z0-9_.@#:-]+)*$/.test(value))
+                 return _('Используйте имена роутеров без пробелов внутри. Разделители: пробел, запятая или точка с запятой.');
+             return true;
+         };
+ 
++        o = s.option(form.Value, 'router_aliases', _('Алиасы старых имён роутера'));
++        o.placeholder = 'old-router-name rax';
++        o.rmempty = true;
++        o.size = 96;
++        o.description = _('Необязательно. Нужны после переименования worker-роутера: бот будет отвечать и на старое имя из кнопок панели. Это помогает, если в поле «Роутеры в Telegram-панели» на главном роутере ещё осталось старое имя.');
++        o.validate = function(section_id, value) {
++            if (value && !/^[A-Za-z0-9_.@#:-]+([,;\s]+[A-Za-z0-9_.@#:-]+)*$/.test(value))
++                return _('Используйте имена без пробелов внутри. Разделители: пробел, запятая или точка с запятой.');
++            return true;
++        };
++
+         o = s.option(form.Flag, 'panel_send_header_on_actions', _('Картинка перед статусом/отчётом/помощью'));
+         o.default = '1';
+         o.rmempty = false;
+diff -ruN /tmp/base119/podkop-telegram-agent/install.sh /tmp/fix119/podkop-telegram-agent/install.sh
+--- /tmp/base119/podkop-telegram-agent/install.sh	2026-05-23 00:16:02.000000000 +0000
++++ /tmp/fix119/podkop-telegram-agent/install.sh	2026-05-23 17:01:27.857422999 +0000
+@@ -2,7 +2,7 @@
+ # OpenWrt/BusyBox ash compatible installer for podkop-telegram-agent.
+ # Safe for SSH install/update: preserves existing /etc/config/podkop_tg values by default.
+ # NO_OPKG_FIX_V2: installer works without opkg/apk when curl+jq already exist in firmware.
+-# DEVICE_ACCESS_V115: fast parental-control menu; no firewall rebuild on read-only buttons; cached static DHCP list; bot version v1.0.7.
++# LUCIPODKOP_V119: LuCI version display, router-name autodetect/aliases, OpenWrt 25 apk Podkop version detection, bot version v1.0.8.
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+@@ -358,6 +358,35 @@
+     printf '%s' "$1" | tr '[:space:]' '_'
+ }
+ 
++is_bad_router_name() {
++    local n="$1" hn
++    [ -z "$n" ] && return 0
++    hn="$(hostname 2>/dev/null || true)"
++    case "$n" in
++        openwrt|OpenWrt|OPENWRT|o__nwrt|o--nwrt|o_nwrt|localhost|router|Router) return 0 ;;
++    esac
++    [ -n "$hn" ] && [ "$hn" != "OpenWrt" ] && [ "$hn" != "openwrt" ] && [ "$n" = "openwrt" ] && return 0
++    return 1
++}
++
++append_router_alias() {
++    local alias="$1" cur x out seen
++    [ -n "$alias" ] || return 0
++    is_bad_router_name "$alias" && return 0
++    cur="$(uci_get "$CONFIG.$SECTION.router_aliases")"
++    out=""
++    seen=" "
++    for x in $cur $alias; do
++        [ -n "$x" ] || continue
++        [ "$x" = "$ROUTER_NAME" ] && continue
++        case "$seen" in *" $x "*) continue ;; esac
++        out="$out $x"
++        seen="$seen$x "
++    done
++    out="$(printf '%s' "$out" | sed 's/^ *//;s/ *$//')"
++    [ -n "$out" ] && uci set "$CONFIG.$SECTION.router_aliases=$out"
++}
++
+ is_placeholder_token() {
+     case "$1" in
+         ''|TELEGRAM_BOT_TOKEN|BOT_TOKEN|YOUR_BOT_TOKEN|PASTE_TOKEN_HERE|TOKEN|xxx|XXX|'<TOKEN>'|'CHANGE_ME')
+@@ -399,13 +428,14 @@
+ }
+ 
+ configure_uci() {
+-    local old_token old_chat old_router old_section host typed detected selected_section
++    local old_token old_chat old_router old_section old_aliases host typed detected selected_section
+ 
+     uci -q get "$CONFIG.$SECTION" >/dev/null 2>&1 || uci set "$CONFIG.$SECTION=bot"
+ 
+     old_token="$(uci_get "$CONFIG.$SECTION.token")"
+     old_chat="$(uci_get "$CONFIG.$SECTION.chat_id")"
+     old_router="$(uci_get "$CONFIG.$SECTION.router_name")"
++    old_aliases="$(uci_get "$CONFIG.$SECTION.router_aliases")"
+     old_section="$(uci_get "$CONFIG.$SECTION.podkop_section")"
+ 
+     if [ -n "$old_token" ] && ! valid_bot_token "$old_token"; then
+@@ -422,6 +452,10 @@
+     [ -z "$BOT_TOKEN" ] && BOT_TOKEN="$old_token"
+     [ -z "$CHAT_ID" ] && CHAT_ID="$old_chat"
+     [ -z "$ROUTER_NAME" ] && ROUTER_NAME="$old_router"
++    if is_bad_router_name "$ROUTER_NAME"; then
++        [ -n "$ROUTER_NAME" ] && [ "$ROUTER_NAME" != "openwrt" ] && old_aliases="$old_aliases $ROUTER_NAME"
++        ROUTER_NAME=""
++    fi
+     [ -z "$PODKOP_SECTION" ] && PODKOP_SECTION="$old_section"
+ 
+     if [ -z "$BOT_TOKEN" ] && is_interactive; then
+@@ -452,6 +486,9 @@
+         fi
+     fi
+     ROUTER_NAME="$(normalize_router_name "$ROUTER_NAME")"
++    if [ -n "$old_router" ] && [ "$old_router" != "$ROUTER_NAME" ] && ! is_bad_router_name "$old_router"; then
++        old_aliases="$old_aliases $old_router"
++    fi
+ 
+     detected="$(detect_proxy_section || true)"
+     selected_section="$PODKOP_SECTION"
+@@ -474,6 +511,9 @@
+     [ -n "$BOT_TOKEN" ] && uci set "$CONFIG.$SECTION.token=$BOT_TOKEN"
+     [ -n "$CHAT_ID" ] && uci set "$CONFIG.$SECTION.chat_id=$CHAT_ID"
+     [ -n "$ROUTER_NAME" ] && uci set "$CONFIG.$SECTION.router_name=$ROUTER_NAME"
++    if [ -n "$old_aliases" ]; then
++        uci set "$CONFIG.$SECTION.router_aliases=$(printf '%s' "$old_aliases" | tr ',;\n\t' '    ' | awk -v rn="$ROUTER_NAME" 'BEGIN{seen=" "} {for(i=1;i<=NF;i++){if($i==rn) continue; if(index(seen," "$i" ")==0){out=out (out?" ":"") $i; seen=seen $i " "}}} END{print out}')"
++    fi
+     [ -n "$selected_section" ] && uci set "$CONFIG.$SECTION.podkop_section=$selected_section"
+ 
+     uci_set_if_empty "$CONFIG.$SECTION.poll_timeout" "25"
