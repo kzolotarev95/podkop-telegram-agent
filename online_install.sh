@@ -1,7 +1,7 @@
 #!/bin/sh
-# REPO_ROOT_INSTALL_V7_QUIET_HOURS
+# REPO_ROOT_INSTALL_V8_QUIET_STATUS_V11010
 # podkop-telegram-agent one-link installer/updater from repository root.
-# Uses full archive from GitHub repository root, no Releases.
+# Uses full overlay archive from GitHub repository root, no Releases.
 # Usage:
 #   wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
 
@@ -39,7 +39,7 @@ download() {
 have tar || fail "tar not found"
 
 log "podkop-telegram-agent installer"
-log "Marker: REPO_ROOT_INSTALL_V7_QUIET_HOURS"
+log "Marker: REPO_ROOT_INSTALL_V8_QUIET_STATUS_V11010"
 log "Mode: GitHub repository root, full overlay archive, no Releases"
 log "Archive URL: $BASE_URL"
 
