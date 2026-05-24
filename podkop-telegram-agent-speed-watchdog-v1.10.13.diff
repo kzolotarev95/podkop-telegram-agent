@@ -1,0 +1,230 @@
+diff -ruN workv112/pkg/podkop-telegram-agent/RELEASE_NOTES.md release_tree/podkop-telegram-agent/RELEASE_NOTES.md
+--- workv112/pkg/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-24 20:26:14.000000000 +0000
++++ release_tree/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-24 21:47:28.136011135 +0000
+@@ -1,11 +1,17 @@
+-# v1.10.12 — Speed limit for static devices
++# v1.10.13 — Speed limit watchdog fix
++
++- Fixed device speed limits that could stop working after about a minute because of OpenWrt flow offload/firewall reloads.
++- Added speed watchdog: re-applies nft rules, flushes OpenWrt flowtables while speed rules are active, and cleans conntrack when a new limit is applied.
++- Visible version: `Podkop Telegram Agent v1.10.13`.
++
++# v1.10.13 — Speed limit for static devices
+ 
+ - Added Telegram menu `🚦 Лимит скорости`.
+ - Added static DHCP device buttons for fast speed limiting.
+ - Added presets: `64 КБ/с`, `128 КБ/с`, `256 КБ/с`, `512 КБ/с`, `1 МБ/с`, `2 МБ/с`.
+ - Added commands: `/speed`, `/speeddevice`, `/speedset`, `/speedoff`, `/speedlimits`, `/speedapply`.
+ - Rules are applied through nftables tables: `podkop_tg_speed`, `podkop_tg_speed_bridge`, `podkop_tg_speed_ingress`.
+-- Visible version: `Podkop Telegram Agent v1.10.12`.
++- Visible version: `Podkop Telegram Agent v1.10.13`.
+ 
+ ---
+ 
+diff -ruN workv112/pkg/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent release_tree/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+--- workv112/pkg/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-24 20:25:15.000000000 +0000
++++ release_tree/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-24 21:47:28.134367473 +0000
+@@ -5,8 +5,9 @@
+ # QUIET_STATUS_V11010: quiet-hours status text shows active/inactive; default 23:00-08:00; mode queue/drop.
+ # HELP_BUTTON_OUTPUT_V11011: Help button and /help send plain chunked command list, no header-only response.
+ # SPEED_LIMIT_V11012: Telegram speed limiter for static DHCP devices via nft limit rules.
++# SPEED_WATCHDOG_V11013: speed limiter re-applies nft rules and flushes flow offload so limits do not disappear.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+-BOT_VERSION="v1.10.12"
++BOT_VERSION="v1.10.13"
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+@@ -28,6 +29,8 @@
+ ACCESS_LAST_FILE="/tmp/podkop_tg_access_last"
+ SPEED_RULES_FILE="/etc/podkop-telegram-agent/speed_rules.conf"
+ SPEED_LAST_FILE="/tmp/podkop_tg_speed_last"
++SPEED_LAST_APPLY_FILE="/tmp/podkop_tg_speed_last_apply"
++SPEED_WATCHDOG_INTERVAL=10
+ DONATE_URL="https://t.me/kzolotarev95"
+ DEFAULT_HEADER_IMAGE_PATH="/etc/podkop-telegram-agent/header.jpg"
+ DEFAULT_BOT_MODE="standalone"
+@@ -3037,6 +3040,44 @@
+     fi
+ }
+ 
++speed_flowtables_flush() {
++    local table ft
++    # SPEED_WATCHDOG_V11013:
++    # OpenWrt flow offload can bypass later nft rules for already established
++    # traffic, so speed limits may appear to work only for the first seconds.
++    # Flush flowtables while any speed rule is active. This does not delete
++    # connections, it only forces packets back through nft hooks.
++    command -v nft >/dev/null 2>&1 || return 0
++    for table in fw4 firewall; do
++        nft list table inet "$table" >/tmp/podkop_tg_speed_ft_$$ 2>/dev/null || continue
++        awk '/^[[:space:]]*flowtable[[:space:]]+/ { print $2 }' /tmp/podkop_tg_speed_ft_$$ 2>/dev/null | while IFS= read -r ft; do
++            [ -n "$ft" ] || continue
++            nft flush flowtable inet "$table" "$ft" >/dev/null 2>&1 || true
++        done
++    done
++    rm -f /tmp/podkop_tg_speed_ft_$$ 2>/dev/null || true
++}
++
++speed_conntrack_cleanup_file() {
++    local file="$1" ip
++    # On first applying a limit, remove existing conntrack entries for that IP
++    # so an already-open speedtest/download cannot keep old/offloaded state.
++    if command -v conntrack >/dev/null 2>&1; then
++        awk -F'|' 'NF && $1 != "" && !seen[$1]++ { print $1 }' "$file" 2>/dev/null | while IFS= read -r ip; do
++            access_valid_ipv4 "$ip" || continue
++            conntrack -D -s "$ip" >/dev/null 2>&1 || true
++            conntrack -D -d "$ip" >/dev/null 2>&1 || true
++        done
++    fi
++    speed_flowtables_flush
++}
++
++speed_firewall_tables_present() {
++    command -v nft >/dev/null 2>&1 || return 1
++    nft list table inet podkop_tg_speed >/dev/null 2>&1 || return 1
++    return 0
++}
++
+ speed_nft_add_limit_rule() {
+     local family="$1" table="$2" chain="$3" ip="$4" mac="$5" rate="$6" nft_rate ok=1
+     nft_rate="$(speed_rate_nft "$rate" 2>/dev/null)" || return 1
+@@ -3130,6 +3171,10 @@
+     speed_active_entries | awk -F'|' 'NF { k=$1 "|" $2 "|" $3; if ($1 != "" && !seen[k]++) print $0 }' > "$tmp"
+     speed_firewall_apply_file "$tmp"
+     rc=$?
++    if [ "$rc" = "0" ] && [ -s "$tmp" ]; then
++        speed_conntrack_cleanup_file "$tmp" >/dev/null 2>&1 || true
++        date +%s > "$SPEED_LAST_APPLY_FILE" 2>/dev/null || true
++    fi
+     state="$(awk -F'|' 'NF && $1 != "" { if (!seen[$1]++) printf "%s=%s ", $1, $3 }' "$tmp" 2>/dev/null | sed 's/[[:space:]]*$//')"
+     old="$(cat "$SPEED_LAST_FILE" 2>/dev/null)"
+     if [ "$state" != "$old" ]; then
+@@ -3140,6 +3185,53 @@
+     return "$rc"
+ }
+ 
++speed_watchdog_tick() {
++    local tmp now last age rc before_present
++    [ "$SPEED_CONTROL" = "1" ] || {
++        speed_firewall_clear >/dev/null 2>&1 || true
++        return 0
++    }
++    speed_ensure_files || return 1
++    tmp="/tmp/podkop_tg_speed_watchdog_$$"
++    speed_active_entries | awk -F'|' 'NF { k=$1 "|" $2 "|" $3; if ($1 != "" && !seen[k]++) print $0 }' > "$tmp"
++
++    if [ ! -s "$tmp" ]; then
++        speed_firewall_clear >/dev/null 2>&1 || true
++        rm -f "$tmp"
++        return 0
++    fi
++
++    now="$(date +%s 2>/dev/null || echo 0)"
++    last="$(cat "$SPEED_LAST_APPLY_FILE" 2>/dev/null || echo 0)"
++    case "$last" in ''|*[!0-9]*) last=0 ;; esac
++    age=$((now - last))
++
++    before_present=1
++    speed_firewall_tables_present && before_present=0
++
++    # Re-apply if firewall/podkop/firewall4 reload removed our private table,
++    # or periodically to refresh changed static MAC bindings. Between re-applies
++    # only flush flowtables to prevent flow-offload bypass.
++    if [ "$before_present" != "0" ] || [ "$age" -ge 60 ] 2>/dev/null; then
++        speed_firewall_apply_file "$tmp"
++        rc=$?
++        if [ "$rc" = "0" ]; then
++            speed_flowtables_flush >/dev/null 2>&1 || true
++            date +%s > "$SPEED_LAST_APPLY_FILE" 2>/dev/null || true
++            if [ "$before_present" != "0" ]; then
++                log "speed watchdog refreshed backend=nft reason=missing_table"
++            else
++                log "speed watchdog refreshed backend=nft reason=periodic"
++            fi
++        fi
++    else
++        speed_flowtables_flush >/dev/null 2>&1 || true
++    fi
++
++    rm -f "$tmp"
++    return 0
++}
++
+ speed_set_limit_by_ip() {
+     local ip="$1" rate="$2" name mac tmp norm_rate
+     access_valid_ipv4 "$ip" || return 3
+@@ -3275,7 +3367,7 @@
+ 
+ Поддерживаются значения: <code>64kb</code>, <code>128kb</code>, <code>256kb</code>, <code>512kb</code>, <code>1mb</code>, <code>2mb</code>.
+ 
+-Важно: лимит работает через nftables и ограничивает трафик сбросом пакетов после превышения скорости. Для точного QoS/шейпинга нужен отдельный SQM/tc, но для быстрого ограничения устройства этого достаточно.
++Важно: лимит работает через nftables и watchdog. Бот регулярно восстанавливает правила и сбрасывает flow offload, чтобы ограничение не пропадало через минуту. Для идеального QoS/шейпинга всё равно нужен отдельный SQM/tc, но для быстрого ограничения устройства этого достаточно.
+ EOF
+ }
+ 
+@@ -5067,24 +5159,30 @@
+     load_config
+     if [ "$ENABLED" != "1" ]; then log "disabled in /etc/config/podkop_tg"; exit 0; fi
+     if [ -z "$TOKEN" ]; then log "Telegram token is not configured: /etc/config/podkop_tg"; exit 1; fi
+-    log "started router_name=$ROUTER_NAME bot_mode=$BOT_MODE routers=$(known_routers | tr '\n' ',')"
++    log "started router_name=$ROUTER_NAME bot_mode=$BOT_MODE routers=$(known_routers | tr '
++' ',')"
+     send_boot_notification
+     init_podkop_lifecycle_marker
++    access_apply >/dev/null 2>&1 || true
++    speed_apply >/dev/null 2>&1 || true
+     last_check=0
++    last_speed_watchdog=0
+     while true; do
+         load_config
+         process_updates
+         now="$(date +%s)"
++        if [ $((now - last_speed_watchdog)) -ge "$SPEED_WATCHDOG_INTERVAL" ]; then
++            speed_watchdog_tick >/dev/null 2>&1 || true
++            last_speed_watchdog="$now"
++        fi
+         interval="$(alert_check_interval)"
+         if [ $((now - last_check)) -ge "$interval" ]; then
+             check_alerts
+             access_apply >/dev/null 2>&1 || true
+-            speed_apply >/dev/null 2>&1 || true
+             check_daily_report
+             last_check="$now"
+         fi
+         sleep 1
+     done
+ }
+-
+ main "$@"
+diff -ruN workv112/pkg/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js release_tree/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+--- workv112/pkg/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-24 20:25:52.000000000 +0000
++++ release_tree/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-24 21:47:28.134933272 +0000
+@@ -5,6 +5,7 @@
+ // QUIET_STATUS_V11010: LuCI fields and active/inactive status for alert quiet hours.
+ // HELP_BUTTON_OUTPUT_V11011: Help button sends text list, not only header image.
+ // SPEED_LIMIT_V11012: Telegram speed limiter for static DHCP devices.
++// SPEED_WATCHDOG_V11013: speed limiter watchdog keeps nft rules active after flow offload/firewall reload.
+ // OpenWrt 25 LuCI may fail with 'view.extend is not a function' if variables are placed before requires.
+ 'require view';
+ 'require form';
+@@ -13,7 +14,7 @@
+ 'require ui';
+ 'require poll';
+ 
+-var BOT_VERSION = 'v1.10.12';
++var BOT_VERSION = 'v1.10.13';
+ 
+ function serviceStatus() {
+     return fs.exec('/etc/init.d/podkop-telegram-agent', [ 'status' ]).then(function(res) {
+diff -ruN workv112/pkg/podkop-telegram-agent/install.sh release_tree/podkop-telegram-agent/install.sh
+--- workv112/pkg/podkop-telegram-agent/install.sh	2026-05-24 20:25:52.000000000 +0000
++++ release_tree/podkop-telegram-agent/install.sh	2026-05-24 21:47:28.135330256 +0000
+@@ -5,6 +5,7 @@
+ # INSTALL_QUIET_STATUS_V11010: overlay update adds quiet-hours defaults without wiping token/chat_id.
+ # INSTALL_HELP_BUTTON_OUTPUT_V11011: full overlay keeps config and fixes Help text output.
+ # INSTALL_SPEED_LIMIT_V11012: adds Telegram speed limiter for static DHCP devices.
++# INSTALL_SPEED_WATCHDOG_V11013: keeps speed limits active after flow offload/firewall reload.
+ # NO_OPKG_FIX_V2: installer works without opkg/apk when curl+jq already exist in firmware.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ 
