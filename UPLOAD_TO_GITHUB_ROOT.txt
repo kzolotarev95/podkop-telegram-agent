@@ -1,7 +1,0 @@
-Upload these files to the repository root:
-
-install.sh
-online-install.sh
-podkop-telegram-agent-github-release.tar.gz
-podkop-telegram-agent-github-release.zip
-podkop-telegram-agent-github-release.sha256
