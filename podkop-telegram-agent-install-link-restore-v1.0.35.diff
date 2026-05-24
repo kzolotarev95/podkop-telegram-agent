@@ -1,0 +1,30 @@
+diff --git a/install.sh b/install.sh
+--- a/install.sh
++++ b/install.sh
+@@
+-# REPO_ROOT_INSTALL_V4
++# REPO_ROOT_INSTALL_V5
++# INSTALL_LINK_RESTORE_V135: restore full package installation from repository root.
+@@
+ ash install.sh "$@"
++
++New guard:
++  files/usr/bin/podkop-telegram-agent must exist in the archive.
++  files/etc/init.d/podkop-telegram-agent must exist in the archive.
++
++Archive is full package, not patch-only hotfix.
++
++Important files inside archive:
++podkop-telegram-agent/README.md
+podkop-telegram-agent/RELEASE_NOTES.md
+podkop-telegram-agent/files/etc/config/podkop_tg
+podkop-telegram-agent/files/etc/init.d/podkop-telegram-agent
+podkop-telegram-agent/files/etc/podkop-telegram-agent/header.jpg
+podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+podkop-telegram-agent/files/usr/bin/podkop-telegram-agent-logread
+podkop-telegram-agent/files/usr/share/luci/menu.d/luci-app-podkop-tg.json
+podkop-telegram-agent/files/usr/share/rpcd/acl.d/luci-app-podkop-tg.json
+podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+podkop-telegram-agent/install.sh
+podkop-telegram-agent/online-install.sh
+podkop-telegram-agent/uninstall.sh
