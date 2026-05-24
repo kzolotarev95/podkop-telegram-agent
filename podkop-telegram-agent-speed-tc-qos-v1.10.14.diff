@@ -1,0 +1,575 @@
+diff -ruN podkop-telegram-agent/README.md /mnt/data/work_v11014/release/podkop-telegram-agent/README.md
+--- podkop-telegram-agent/README.md	2026-05-24 21:47:28.000000000 +0000
++++ /mnt/data/work_v11014/release/podkop-telegram-agent/README.md	2026-05-24 22:08:18.016206951 +0000
+@@ -1,8 +1,8 @@
+ # podkop-telegram-agent
+ 
+-Latest fix: v1.0.14 — fixed parental-control IP parsing and old malformed block rules.
++Latest fix: v1.10.14 — speed limiter moved from nft limit to SQM/tc HTB + fq_codel/IFB.
+ 
+-Версия: **v1.0.7**
++Версия: **v1.10.14**
+ 
+ Telegram-модуль для Podkop/OpenWrt.
+ 
+@@ -29,6 +29,7 @@
+ - LuCI-модуль с настройками.
+ - Backup OpenWrt через `sysupgrade -b`.
+ - Управление доступом устройств / родительский контроль: блокировка статических IP по расписанию через отдельную firewall-таблицу, совместимо с OpenWrt 24/25.
++- Ограничение скорости статических DHCP-устройств кнопками в Telegram: 64 КБ/с, 128 КБ/с, 256 КБ/с, 512 КБ/с, 1 МБ/с, 2 МБ/с. В v1.10.14 используется tc HTB + fq_codel, upload через IFB при наличии модуля.
+ - Управление Podkop URLTest/VLESS: список ссылок из UCI, добавление/удаление, применение выбранной ссылки, возврат секции в URLTest, проверка доступности серверов по TCP.
+ 
+ ## Зависимости
+@@ -38,6 +39,8 @@
+ ```sh
+ opkg update
+ opkg install curl jq ca-bundle unzip tar gzip
++# для ограничения скорости через tc/SQM желательно:
++opkg install tc-full kmod-ifb kmod-sched
+ ```
+ 
+ Для расширенного отчёта с Wi-Fi-информацией:
+@@ -105,6 +108,8 @@
+ ```sh
+ opkg update
+ opkg install curl jq ca-bundle unzip tar gzip rpcd-mod-file iwinfo
++# для ограничения скорости через tc/SQM желательно:
++opkg install tc-full kmod-ifb kmod-sched
+ 
+ cd /tmp
+ rm -rf /tmp/podkop-telegram-agent
+@@ -275,6 +280,8 @@
+ ```sh
+ opkg update
+ opkg install curl jq ca-bundle unzip tar gzip rpcd-mod-file iwinfo
++# для ограничения скорости через tc/SQM желательно:
++opkg install tc-full kmod-ifb kmod-sched
+ 
+ cd /
+ tar -xzpf /tmp/podkop-telegram-agent-backup-no-token-*.tar.gz
+diff -ruN podkop-telegram-agent/RELEASE_NOTES.md /mnt/data/work_v11014/release/podkop-telegram-agent/RELEASE_NOTES.md
+--- podkop-telegram-agent/RELEASE_NOTES.md	2026-05-24 21:47:28.000000000 +0000
++++ /mnt/data/work_v11014/release/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-24 22:07:48.019364034 +0000
+@@ -1,3 +1,13 @@
++# v1.10.14 — SQM/tc speed limiter
++
++- Removed device speed limiting through `nft limit rate over ... drop`.
++- Added real tc-based shaping: HTB + fq_codel classes for static DHCP devices.
++- Download is shaped on LAN egress by destination IPv4.
++- Upload is shaped through IFB when the kernel module/action is available; fallback is tc police.
++- Old `podkop_tg_speed*` nft tables are deleted automatically during start/update.
++- Watchdog now restores tc qdisc/classes if interface/firewall reload removes them.
++- Visible version: `Podkop Telegram Agent v1.10.14`.
++
+ # v1.10.13 — Speed limit watchdog fix
+ 
+ - Fixed device speed limits that could stop working after about a minute because of OpenWrt flow offload/firewall reloads.
+diff -ruN podkop-telegram-agent/files/usr/bin/podkop-telegram-agent /mnt/data/work_v11014/release/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+--- podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-24 21:47:28.000000000 +0000
++++ /mnt/data/work_v11014/release/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-24 22:08:31.132739665 +0000
+@@ -4,10 +4,9 @@
+ # Dependencies: ash, curl, jq, uci, logread.
+ # QUIET_STATUS_V11010: quiet-hours status text shows active/inactive; default 23:00-08:00; mode queue/drop.
+ # HELP_BUTTON_OUTPUT_V11011: Help button and /help send plain chunked command list, no header-only response.
+-# SPEED_LIMIT_V11012: Telegram speed limiter for static DHCP devices via nft limit rules.
+-# SPEED_WATCHDOG_V11013: speed limiter re-applies nft rules and flushes flow offload so limits do not disappear.
++# SPEED_TC_QOS_V11014: Telegram speed limiter now uses tc/HTB/fq_codel + IFB instead of nft limit drops.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+-BOT_VERSION="v1.10.13"
++BOT_VERSION="v1.10.14"
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+@@ -30,7 +29,8 @@
+ SPEED_RULES_FILE="/etc/podkop-telegram-agent/speed_rules.conf"
+ SPEED_LAST_FILE="/tmp/podkop_tg_speed_last"
+ SPEED_LAST_APPLY_FILE="/tmp/podkop_tg_speed_last_apply"
+-SPEED_WATCHDOG_INTERVAL=10
++SPEED_WATCHDOG_INTERVAL=15
++SPEED_IFB_DEV="ifb-podkop-tg"
+ DONATE_URL="https://t.me/kzolotarev95"
+ DEFAULT_HEADER_IMAGE_PATH="/etc/podkop-telegram-agent/header.jpg"
+ DEFAULT_BOT_MODE="standalone"
+@@ -3033,131 +3033,177 @@
+ }
+ 
+ speed_firewall_clear() {
++    local iface
++    # SPEED_TC_QOS_V11014:
++    # New speed limiter uses tc/HTB/fq_codel + IFB. Old nft limiter tables
++    # from v1.10.12/v1.10.13 are removed here during upgrade/startup.
+     if command -v nft >/dev/null 2>&1; then
+         nft delete table inet podkop_tg_speed >/dev/null 2>&1 || true
+         nft delete table bridge podkop_tg_speed_bridge >/dev/null 2>&1 || true
+         nft delete table netdev podkop_tg_speed_ingress >/dev/null 2>&1 || true
+     fi
++    command -v tc >/dev/null 2>&1 || return 0
++    access_lan_ifaces | while IFS= read -r iface; do
++        [ -n "$iface" ] || continue
++        tc qdisc del dev "$iface" root >/dev/null 2>&1 || true
++        tc qdisc del dev "$iface" ingress >/dev/null 2>&1 || true
++        tc qdisc del dev "$iface" clsact >/dev/null 2>&1 || true
++    done
++    if command -v ip >/dev/null 2>&1 && [ -n "$SPEED_IFB_DEV" ]; then
++        tc qdisc del dev "$SPEED_IFB_DEV" root >/dev/null 2>&1 || true
++        ip link set dev "$SPEED_IFB_DEV" down >/dev/null 2>&1 || true
++        ip link delete "$SPEED_IFB_DEV" type ifb >/dev/null 2>&1 || true
++    fi
+ }
+ 
+-speed_flowtables_flush() {
+-    local table ft
+-    # SPEED_WATCHDOG_V11013:
+-    # OpenWrt flow offload can bypass later nft rules for already established
+-    # traffic, so speed limits may appear to work only for the first seconds.
+-    # Flush flowtables while any speed rule is active. This does not delete
+-    # connections, it only forces packets back through nft hooks.
+-    command -v nft >/dev/null 2>&1 || return 0
+-    for table in fw4 firewall; do
+-        nft list table inet "$table" >/tmp/podkop_tg_speed_ft_$$ 2>/dev/null || continue
+-        awk '/^[[:space:]]*flowtable[[:space:]]+/ { print $2 }' /tmp/podkop_tg_speed_ft_$$ 2>/dev/null | while IFS= read -r ft; do
+-            [ -n "$ft" ] || continue
+-            nft flush flowtable inet "$table" "$ft" >/dev/null 2>&1 || true
+-        done
+-    done
+-    rm -f /tmp/podkop_tg_speed_ft_$$ 2>/dev/null || true
++speed_rate_kbit() {
++    local r="$1" num unit
++    r="$(speed_norm_rate "$r")" || return 1
++    unit="${r##*[0-9]}"
++    num="${r%$unit}"
++    case "$unit" in
++        m) printf '%s' $((num * 8192)) ;;
++        *) printf '%s' $((num * 8)) ;;
++    esac
+ }
+ 
+-speed_conntrack_cleanup_file() {
+-    local file="$1" ip
+-    # On first applying a limit, remove existing conntrack entries for that IP
+-    # so an already-open speedtest/download cannot keep old/offloaded state.
+-    if command -v conntrack >/dev/null 2>&1; then
+-        awk -F'|' 'NF && $1 != "" && !seen[$1]++ { print $1 }' "$file" 2>/dev/null | while IFS= read -r ip; do
+-            access_valid_ipv4 "$ip" || continue
+-            conntrack -D -s "$ip" >/dev/null 2>&1 || true
+-            conntrack -D -d "$ip" >/dev/null 2>&1 || true
+-        done
+-    fi
+-    speed_flowtables_flush
++speed_tc_have() {
++    command -v tc >/dev/null 2>&1 || return 1
++    return 0
+ }
+ 
+-speed_firewall_tables_present() {
+-    command -v nft >/dev/null 2>&1 || return 1
+-    nft list table inet podkop_tg_speed >/dev/null 2>&1 || return 1
++speed_tc_setup_ifb() {
++    [ -n "$SPEED_IFB_DEV" ] || return 1
++    command -v ip >/dev/null 2>&1 || return 1
++    speed_tc_have || return 1
++    modprobe ifb numifbs=1 >/dev/null 2>&1 || modprobe ifb >/dev/null 2>&1 || true
++    ip link show dev "$SPEED_IFB_DEV" >/dev/null 2>&1 || ip link add "$SPEED_IFB_DEV" type ifb >/dev/null 2>&1 || return 1
++    ip link set dev "$SPEED_IFB_DEV" up >/dev/null 2>&1 || return 1
+     return 0
+ }
+ 
+-speed_nft_add_limit_rule() {
+-    local family="$1" table="$2" chain="$3" ip="$4" mac="$5" rate="$6" nft_rate ok=1
+-    nft_rate="$(speed_rate_nft "$rate" 2>/dev/null)" || return 1
+-    if access_valid_ipv4 "$ip"; then
+-        nft add rule "$family" "$table" "$chain" ip saddr "$ip" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
+-        nft add rule "$family" "$table" "$chain" ip daddr "$ip" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
+-    fi
+-    if access_valid_mac "$mac"; then
+-        nft add rule "$family" "$table" "$chain" ether saddr "$mac" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
+-        nft add rule "$family" "$table" "$chain" ether daddr "$mac" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
+-    fi
+-    return "$ok"
++speed_tc_init_root() {
++    local dev="$1"
++    [ -n "$dev" ] || return 1
++    speed_tc_have || return 1
++    tc qdisc del dev "$dev" root >/dev/null 2>&1 || true
++    tc qdisc add dev "$dev" root handle 1: htb default 1 >/dev/null 2>&1 || return 1
++    tc class add dev "$dev" parent 1: classid 1:1 htb rate 10000mbit ceil 10000mbit prio 7 >/dev/null 2>&1 || true
++    return 0
+ }
+ 
+-speed_nft_add_ingress_limit_rule() {
+-    local family="$1" table="$2" chain="$3" ip="$4" mac="$5" rate="$6" nft_rate ok=1
+-    nft_rate="$(speed_rate_nft "$rate" 2>/dev/null)" || return 1
+-    if access_valid_ipv4 "$ip"; then
+-        nft add rule "$family" "$table" "$chain" ip saddr "$ip" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
+-    fi
+-    if access_valid_mac "$mac"; then
+-        nft add rule "$family" "$table" "$chain" ether saddr "$mac" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
+-    fi
+-    return "$ok"
++speed_tc_add_class() {
++    local dev="$1" classid="$2" ip="$3" rate="$4" dir="$5" kbit
++    kbit="$(speed_rate_kbit "$rate" 2>/dev/null)" || return 1
++    [ -n "$dev" ] && [ -n "$classid" ] && access_valid_ipv4 "$ip" || return 1
++    tc class add dev "$dev" parent 1: classid 1:"$classid" htb rate "${kbit}kbit" ceil "${kbit}kbit" burst 15k cburst 15k prio 1 >/dev/null 2>&1 || return 1
++    tc qdisc add dev "$dev" parent 1:"$classid" fq_codel quantum 1514 >/dev/null 2>&1 || true
++    case "$dir" in
++        src) tc filter add dev "$dev" protocol ip parent 1: prio "$classid" u32 match ip src "$ip"/32 flowid 1:"$classid" >/dev/null 2>&1 || return 1 ;;
++        *)   tc filter add dev "$dev" protocol ip parent 1: prio "$classid" u32 match ip dst "$ip"/32 flowid 1:"$classid" >/dev/null 2>&1 || return 1 ;;
++    esac
++    return 0
++}
++
++speed_tc_add_ingress_redirect_or_police() {
++    local dev="$1" file="$2" ip rate classid kbit added=0
++    [ -n "$dev" ] && [ -s "$file" ] || return 1
++    speed_tc_have || return 1
++
++    tc qdisc del dev "$dev" ingress >/dev/null 2>&1 || true
++    tc qdisc add dev "$dev" handle ffff: ingress >/dev/null 2>&1 || return 1
++
++    if speed_tc_setup_ifb; then
++        # Best mode: redirect LAN ingress to IFB, then shape it with HTB/fq_codel.
++        tc filter add dev "$dev" parent ffff: protocol ip prio 1 u32 match u32 0 0 action mirred egress redirect dev "$SPEED_IFB_DEV" >/dev/null 2>&1 && return 0
++    fi
++
++    # Fallback when IFB/mirred is missing: tc police. It is less smooth than IFB,
++    # but still uses tc and does not rely on nft limit drops.
++    classid=20
++    while IFS='|' read -r ip rate; do
++        access_valid_ipv4 "$ip" || continue
++        kbit="$(speed_rate_kbit "$rate" 2>/dev/null)" || continue
++        tc filter add dev "$dev" parent ffff: protocol ip prio "$classid" u32 match ip src "$ip"/32 police rate "${kbit}kbit" burst 20k drop flowid :1 >/dev/null 2>&1 && added=$((added + 1))
++        classid=$((classid + 1))
++    done < "$file"
++    [ "$added" -gt 0 ] 2>/dev/null
+ }
+ 
+-speed_firewall_apply_file() {
+-    local file="$1" ip mac rate rc=1 added=0 iface chain
++speed_tc_apply_file() {
++    local file="$1" unique iface ip rate classid added=0 ifb_ok=1
+     speed_firewall_clear
+     [ -s "$file" ] || return 0
+-    command -v nft >/dev/null 2>&1 || return 1
++    speed_tc_have || return 2
+ 
+-    if access_nft_add_table inet podkop_tg_speed; then
+-        access_nft_create_chain inet podkop_tg_speed prerouting prerouting -420 || true
+-        access_nft_create_chain inet podkop_tg_speed forward forward -420 || true
+-        access_nft_create_chain inet podkop_tg_speed output output -420 || true
+-        while IFS='|' read -r ip mac rate; do
+-            [ -n "$ip" ] || continue
+-            for chain in prerouting forward output; do
+-                if nft list chain inet podkop_tg_speed "$chain" >/dev/null 2>&1; then
+-                    speed_nft_add_limit_rule inet podkop_tg_speed "$chain" "$ip" "$mac" "$rate" && added=$((added + 1))
+-                fi
+-            done
+-        done < "$file"
++    unique="/tmp/podkop_tg_speed_tc_unique_$$"
++    awk -F'|' 'NF && $1 != "" && $3 != "" && !seen[$1]++ { print $1 "|" $3 }' "$file" > "$unique" 2>/dev/null || true
++    [ -s "$unique" ] || { rm -f "$unique"; return 0; }
++
++    if speed_tc_setup_ifb; then
++        if speed_tc_init_root "$SPEED_IFB_DEV"; then
++            classid=10
++            while IFS='|' read -r ip rate; do
++                access_valid_ipv4 "$ip" || continue
++                speed_tc_add_class "$SPEED_IFB_DEV" "$classid" "$ip" "$rate" src && added=$((added + 1))
++                classid=$((classid + 1))
++            done < "$unique"
++            ifb_ok=0
++        fi
+     fi
+ 
+-    if access_nft_add_table bridge podkop_tg_speed_bridge; then
+-        access_nft_create_chain bridge podkop_tg_speed_bridge prerouting prerouting -420 || true
+-        access_nft_create_chain bridge podkop_tg_speed_bridge forward forward -420 || true
+-        while IFS='|' read -r ip mac rate; do
+-            [ -n "$ip" ] || continue
+-            for chain in prerouting forward; do
+-                if nft list chain bridge podkop_tg_speed_bridge "$chain" >/dev/null 2>&1; then
+-                    speed_nft_add_limit_rule bridge podkop_tg_speed_bridge "$chain" "$ip" "$mac" "$rate" && added=$((added + 1))
+-                fi
+-            done
+-        done < "$file"
++    access_lan_ifaces | while IFS= read -r iface; do
++        [ -n "$iface" ] || continue
++        # Download direction: router -> LAN device, shape egress by destination IP.
++        if speed_tc_init_root "$iface"; then
++            classid=10
++            while IFS='|' read -r ip rate; do
++                access_valid_ipv4 "$ip" || continue
++                speed_tc_add_class "$iface" "$classid" "$ip" "$rate" dst && echo ok >/tmp/podkop_tg_speed_tc_added_$$
++                classid=$((classid + 1))
++            done < "$unique"
++        fi
++        # Upload direction: LAN device -> router. Best: IFB redirect; fallback: police.
++        speed_tc_add_ingress_redirect_or_police "$iface" "$unique" && echo ok >/tmp/podkop_tg_speed_tc_added_$$
++    done
++
++    if [ -f /tmp/podkop_tg_speed_tc_added_$$ ]; then
++        added=$((added + 1))
++        rm -f /tmp/podkop_tg_speed_tc_added_$$ 2>/dev/null || true
+     fi
+ 
+-    if access_nft_add_table netdev podkop_tg_speed_ingress; then
+-        access_lan_ifaces | while IFS= read -r iface; do
+-            [ -n "$iface" ] || continue
+-            chain="$(access_nft_iface_chain_name "$iface")"
+-            nft list chain netdev podkop_tg_speed_ingress "$chain" >/dev/null 2>&1 || \
+-                nft "add chain netdev podkop_tg_speed_ingress $chain { type filter hook ingress device \"$iface\" priority -420; policy accept; }" >/dev/null 2>&1 || true
+-            if nft list chain netdev podkop_tg_speed_ingress "$chain" >/dev/null 2>&1; then
+-                while IFS='|' read -r ip mac rate; do
+-                    [ -n "$ip" ] || continue
+-                    speed_nft_add_ingress_limit_rule netdev podkop_tg_speed_ingress "$chain" "$ip" "$mac" "$rate" && echo ok >/tmp/podkop_tg_speed_added_$$
+-                done < "$file"
+-            fi
+-        done
+-        if [ -f /tmp/podkop_tg_speed_added_$$ ]; then
+-            added=$((added + 1))
+-            rm -f /tmp/podkop_tg_speed_added_$$ 2>/dev/null || true
++    rm -f "$unique" 2>/dev/null || true
++    [ "$added" -gt 0 ] 2>/dev/null || [ "$ifb_ok" = "0" ]
++}
++
++speed_firewall_tables_present() {
++    local iface
++    speed_tc_have || return 1
++    access_lan_ifaces | while IFS= read -r iface; do
++        [ -n "$iface" ] || continue
++        if tc qdisc show dev "$iface" 2>/dev/null | grep -q 'htb 1:'; then
++            echo ok >/tmp/podkop_tg_speed_tc_present_$$
++            break
+         fi
++    done
++    if [ -f /tmp/podkop_tg_speed_tc_present_$$ ]; then
++        rm -f /tmp/podkop_tg_speed_tc_present_$$ 2>/dev/null || true
++        return 0
+     fi
++    return 1
++}
+ 
+-    [ "$added" -gt 0 ] 2>/dev/null && rc=0
+-    return "$rc"
++speed_conntrack_cleanup_file() {
++    local file="$1" ip
++    # Existing sessions may keep previous rate for a while. Remove conntrack
++    # entries when possible so the new tc class is used immediately.
++    if command -v conntrack >/dev/null 2>&1; then
++        awk -F'|' 'NF && $1 != "" && !seen[$1]++ { print $1 }' "$file" 2>/dev/null | while IFS= read -r ip; do
++            access_valid_ipv4 "$ip" || continue
++            conntrack -D -s "$ip" >/dev/null 2>&1 || true
++            conntrack -D -d "$ip" >/dev/null 2>&1 || true
++        done
++    fi
+ }
+ 
+ speed_apply() {
+@@ -3169,7 +3215,7 @@
+     speed_ensure_files || return 1
+     tmp="/tmp/podkop_tg_speed_entries_$$"
+     speed_active_entries | awk -F'|' 'NF { k=$1 "|" $2 "|" $3; if ($1 != "" && !seen[k]++) print $0 }' > "$tmp"
+-    speed_firewall_apply_file "$tmp"
++    speed_tc_apply_file "$tmp"
+     rc=$?
+     if [ "$rc" = "0" ] && [ -s "$tmp" ]; then
+         speed_conntrack_cleanup_file "$tmp" >/dev/null 2>&1 || true
+@@ -3178,7 +3224,7 @@
+     state="$(awk -F'|' 'NF && $1 != "" { if (!seen[$1]++) printf "%s=%s ", $1, $3 }' "$tmp" 2>/dev/null | sed 's/[[:space:]]*$//')"
+     old="$(cat "$SPEED_LAST_FILE" 2>/dev/null)"
+     if [ "$state" != "$old" ]; then
+-        log "speed limit applied backend=nft rules=${state:-none}"
++        log "speed limit applied backend=tc_htb_fq_codel rules=${state:-none}"
+         printf '%s\n' "$state" > "$SPEED_LAST_FILE"
+     fi
+     rm -f "$tmp"
+@@ -3209,23 +3255,22 @@
+     before_present=1
+     speed_firewall_tables_present && before_present=0
+ 
+-    # Re-apply if firewall/podkop/firewall4 reload removed our private table,
+-    # or periodically to refresh changed static MAC bindings. Between re-applies
+-    # only flush flowtables to prevent flow-offload bypass.
++    # Re-apply if qdisc disappeared after interface/firewall reload, or
++    # periodically so DHCP static MAC/IP changes are picked up.
+     if [ "$before_present" != "0" ] || [ "$age" -ge 60 ] 2>/dev/null; then
+-        speed_firewall_apply_file "$tmp"
++        speed_tc_apply_file "$tmp"
+         rc=$?
+         if [ "$rc" = "0" ]; then
+-            speed_flowtables_flush >/dev/null 2>&1 || true
++            speed_conntrack_cleanup_file "$tmp" >/dev/null 2>&1 || true
+             date +%s > "$SPEED_LAST_APPLY_FILE" 2>/dev/null || true
+             if [ "$before_present" != "0" ]; then
+-                log "speed watchdog refreshed backend=nft reason=missing_table"
++                log "speed watchdog refreshed backend=tc_htb_fq_codel reason=missing_qdisc"
+             else
+-                log "speed watchdog refreshed backend=nft reason=periodic"
++                log "speed watchdog refreshed backend=tc_htb_fq_codel reason=periodic"
+             fi
++        else
++            log "speed watchdog failed backend=tc_htb_fq_codel rc=$rc; install tc/ifb packages if needed"
+         fi
+-    else
+-        speed_flowtables_flush >/dev/null 2>&1 || true
+     fi
+ 
+     rm -f "$tmp"
+@@ -3304,7 +3349,7 @@
+ 🚦 <b>${header} Ограничение скорости устройств</b>
+ 
+ Работает для статических DHCP-устройств из <code>/etc/config/dhcp</code>.
+-Метод: <code>nft limit rate over ... drop</code>
++Метод: <code>tc HTB + fq_codel</code>, upload через <code>IFB</code> при наличии модуля
+ 
+ <b>Активные лимиты:</b>
+ $(speed_rules_text)
+@@ -3363,11 +3408,11 @@
+ <code>/speedset ${router_html} 192.168.1.50 1mb</code> — поставить лимит 1 МБ/с
+ <code>/speedoff ${router_html} 192.168.1.50</code> — снять лимит
+ <code>/speedlimits ${router_html}</code> — показать активные лимиты
+-<code>/speedapply ${router_html}</code> — пере применить nft-правила
++<code>/speedapply ${router_html}</code> — пере-применить tc/SQM-правила
+ 
+ Поддерживаются значения: <code>64kb</code>, <code>128kb</code>, <code>256kb</code>, <code>512kb</code>, <code>1mb</code>, <code>2mb</code>.
+ 
+-Важно: лимит работает через nftables и watchdog. Бот регулярно восстанавливает правила и сбрасывает flow offload, чтобы ограничение не пропадало через минуту. Для идеального QoS/шейпинга всё равно нужен отдельный SQM/tc, но для быстрого ограничения устройства этого достаточно.
++Важно: лимит больше не работает через nft limit. Теперь используется tc/HTB/fq_codel: download шейпится на egress LAN, upload — через IFB, если модуль доступен. Если IFB/mirred недоступен, бот применит tc police как fallback и напишет это в логах.
+ EOF
+ }
+ 
+@@ -4406,7 +4451,7 @@
+ $(speed_device_detail_text "$dev_ip")" "$(speed_device_keyboard_json "$dev_ip")" ;;
+                 3) send_message "$chat" "❌ ${header} Неверный IPv4. Пример: <code>192.168.1.50</code>." ;;
+                 4) send_message "$chat" "❌ ${header} Неверная скорость. Пример: <code>64kb</code>, <code>512kb</code>, <code>1mb</code>." ;;
+-                *) send_message "$chat" "❌ ${header} Ошибка установки лимита, код: <code>$rc</code>. Проверь nft: <code>nft list ruleset | grep podkop_tg_speed</code>" ;;
++                *) send_message "$chat" "❌ ${header} Ошибка установки лимита, код: <code>$rc</code>. Проверь tc: <code>tc qdisc show</code>. При необходимости установи tc-full/kmod-ifb/kmod-sched." ;;
+             esac
+             ;;
+         /speedoff)
+@@ -4433,7 +4478,7 @@
+ 
+ $(speed_status_text)" "$(speed_keyboard_json)"
+             else
+-                send_message "$chat" "❌ ${header} Не удалось применить правила скорости. Нужен nftables. Проверь: <code>nft list ruleset | grep podkop_tg_speed</code>"
++                send_message "$chat" "❌ ${header} Не удалось применить правила скорости. Нужен tc/ifb. Проверь: <code>tc qdisc show</code>."
+             fi
+             ;;
+         /podkopupdate)
+diff -ruN podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js /mnt/data/work_v11014/release/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+--- podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-24 21:47:28.000000000 +0000
++++ /mnt/data/work_v11014/release/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-24 22:07:10.608385624 +0000
+@@ -4,8 +4,7 @@
+ // ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ // QUIET_STATUS_V11010: LuCI fields and active/inactive status for alert quiet hours.
+ // HELP_BUTTON_OUTPUT_V11011: Help button sends text list, not only header image.
+-// SPEED_LIMIT_V11012: Telegram speed limiter for static DHCP devices.
+-// SPEED_WATCHDOG_V11013: speed limiter watchdog keeps nft rules active after flow offload/firewall reload.
++// SPEED_TC_QOS_V11014: speed limiter uses tc/HTB/fq_codel + IFB instead of nft limit.
+ // OpenWrt 25 LuCI may fail with 'view.extend is not a function' if variables are placed before requires.
+ 'require view';
+ 'require form';
+@@ -14,7 +13,7 @@
+ 'require ui';
+ 'require poll';
+ 
+-var BOT_VERSION = 'v1.10.13';
++var BOT_VERSION = 'v1.10.14';
+ 
+ function serviceStatus() {
+     return fs.exec('/etc/init.d/podkop-telegram-agent', [ 'status' ]).then(function(res) {
+@@ -528,7 +527,7 @@
+         o = s.option(form.Flag, 'speed_control', _('Ограничение скорости устройств'));
+         o.default = '1';
+         o.rmempty = false;
+-        o.description = _('Включает Telegram-команды /speed, /speedset, /speedoff. Устройства берутся из статических DHCP-записей. Правила применяются через nft limit.');
++        o.description = _('Включает Telegram-команды /speed, /speedset, /speedoff. Устройства берутся из статических DHCP-записей. Правила применяются через tc/HTB/fq_codel. Для upload используется IFB, если модуль доступен; fallback — tc police.');
+ 
+         o = s.option(form.DummyValue, '_speed_hint', _('Команды Telegram'));
+         o.rawhtml = true;
+diff -ruN podkop-telegram-agent/install.sh /mnt/data/work_v11014/release/podkop-telegram-agent/install.sh
+--- podkop-telegram-agent/install.sh	2026-05-24 21:47:28.000000000 +0000
++++ /mnt/data/work_v11014/release/podkop-telegram-agent/install.sh	2026-05-24 22:08:02.055017251 +0000
+@@ -5,7 +5,7 @@
+ # INSTALL_QUIET_STATUS_V11010: overlay update adds quiet-hours defaults without wiping token/chat_id.
+ # INSTALL_HELP_BUTTON_OUTPUT_V11011: full overlay keeps config and fixes Help text output.
+ # INSTALL_SPEED_LIMIT_V11012: adds Telegram speed limiter for static DHCP devices.
+-# INSTALL_SPEED_WATCHDOG_V11013: keeps speed limits active after flow offload/firewall reload.
++# INSTALL_SPEED_TC_QOS_V11014: speed limiter switched from nft limit to tc/HTB/fq_codel + IFB.
+ # NO_OPKG_FIX_V2: installer works without opkg/apk when curl+jq already exist in firmware.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ 
+@@ -218,6 +218,28 @@
+     pkg_install iwinfo || warn "iwinfo was not installed; report will work without Wi-Fi client details."
+ }
+ 
++install_speed_deps() {
++    local mgr pkgs=""
++    # Optional, used for v1.10.14 speed limiting. The bot can still install
++    # without these packages, but /speed works best with tc-full + ifb/mirred.
++    have tc || pkgs="$pkgs tc-full"
++
++    # Try to load IFB. If it fails, request kmod-ifb/kmod-sched when a package manager exists.
++    modprobe ifb >/dev/null 2>&1 || pkgs="$pkgs kmod-ifb kmod-sched"
++
++    [ -z "$(printf '%s' "$pkgs" | tr -d ' ')" ] && return 0
++    mgr="$(pkg_manager 2>/dev/null || true)"
++    if [ -z "$mgr" ]; then
++        warn "opkg/apk not found; cannot auto-install speed limiter packages:$pkgs. /speed may need tc-full/kmod-ifb/kmod-sched."
++        return 0
++    fi
++
++    log "Installing optional speed limiter packages with $mgr:$pkgs"
++    pkg_update_once || return 0
++    # shellcheck disable=SC2086
++    pkg_install $pkgs || warn "speed limiter packages were not fully installed. If /speed fails, install: tc-full kmod-ifb kmod-sched"
++}
++
+ 
+ backup_file() {
+     local f="$1"
+@@ -720,6 +742,7 @@
+     install_required_deps
+     install_luci_deps
+     install_report_deps
++    install_speed_deps
+ 
+     copy_local_files || copy_remote_files || fail "package files not found. Run from the unpacked archive directory or set SRC_BASE."
+     configure_uci
+diff -ruN podkop-telegram-agent/uninstall.sh /mnt/data/work_v11014/release/podkop-telegram-agent/uninstall.sh
+--- podkop-telegram-agent/uninstall.sh	2026-05-24 20:26:29.000000000 +0000
++++ /mnt/data/work_v11014/release/podkop-telegram-agent/uninstall.sh	2026-05-24 22:07:27.859349768 +0000
+@@ -13,6 +13,24 @@
+     nft delete table bridge podkop_tg_speed_bridge >/dev/null 2>&1 || true
+     nft delete table netdev podkop_tg_speed_ingress >/dev/null 2>&1 || true
+ fi
++
++# Clear tc/SQM speed limiter qdiscs created by bot.
++if command -v tc >/dev/null 2>&1; then
++    for p in /sys/class/net/*; do
++        [ -d "$p" ] || continue
++        i="${p##*/}"
++        case "$i" in lo|sit*|ip6tnl*|gre*|gretap*|erspan*|tun*|wg*|tailscale*|ppp*|wwan*|wan|wan6) continue ;; esac
++        tc qdisc del dev "$i" root >/dev/null 2>&1 || true
++        tc qdisc del dev "$i" ingress >/dev/null 2>&1 || true
++        tc qdisc del dev "$i" clsact >/dev/null 2>&1 || true
++    done
++    tc qdisc del dev ifb-podkop-tg root >/dev/null 2>&1 || true
++fi
++if command -v ip >/dev/null 2>&1; then
++    ip link set dev ifb-podkop-tg down >/dev/null 2>&1 || true
++    ip link delete ifb-podkop-tg type ifb >/dev/null 2>&1 || true
++fi
++
+ if command -v iptables >/dev/null 2>&1; then
+     iptables -D FORWARD -j PODKOP_TG_ACCESS >/dev/null 2>&1 || true
+     iptables -F PODKOP_TG_ACCESS >/dev/null 2>&1 || true
+@@ -24,7 +42,7 @@
+ rm -f /usr/share/luci/menu.d/luci-app-podkop-tg.json
+ rm -f /usr/share/rpcd/acl.d/luci-app-podkop-tg.json
+ rm -rf /www/luci-static/resources/view/podkop-tg
+-rm -f /tmp/podkop_tg_offset /tmp/podkop_tg_last_state /tmp/podkop_tg_last_alert /tmp/podkop_tg_last_report /tmp/podkop_tg_update.lock /tmp/podkop_tg_last_update /tmp/podkop_tg_access_last /tmp/podkop_tg_speed_last
++rm -f /tmp/podkop_tg_offset /tmp/podkop_tg_last_state /tmp/podkop_tg_last_alert /tmp/podkop_tg_last_report /tmp/podkop_tg_update.lock /tmp/podkop_tg_last_update /tmp/podkop_tg_access_last /tmp/podkop_tg_speed_last /tmp/podkop_tg_speed_last_apply
+ 
+ if [ -x /etc/init.d/rpcd ]; then
+     /etc/init.d/rpcd restart >/dev/null 2>&1 || true

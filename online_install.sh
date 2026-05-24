@@ -1,5 +1,5 @@
 #!/bin/sh
-# REPO_ROOT_INSTALL_V11_SPEED_WATCHDOG_V11013
+# REPO_ROOT_INSTALL_V12_SPEED_TC_QOS_V11014
 # podkop-telegram-agent one-link installer/updater from repository root.
 # Uses full overlay archive from GitHub repository root, no Releases.
 # Usage:
@@ -39,7 +39,7 @@ download() {
 have tar || fail "tar not found"
 
 log "podkop-telegram-agent installer"
-log "Marker: REPO_ROOT_INSTALL_V11_SPEED_WATCHDOG_V11013"
+log "Marker: REPO_ROOT_INSTALL_V12_SPEED_TC_QOS_V11014"
 log "Mode: GitHub repository root, full overlay archive, no Releases"
 log "Archive URL: $BASE_URL"
 
