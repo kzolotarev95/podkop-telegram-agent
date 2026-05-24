@@ -14,6 +14,9 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/uninstall.sh | ash -s -- --yes
 ```
 
+<img width="1920" height="2819" alt="o62GZUo78J" src="https://github.com/user-attachments/assets/44901540-90e0-4299-b35e-c2a5e11994e5" />
+
+
 
 ## Возможности
 
@@ -163,7 +166,3 @@ OpenWrt 24.x
 OpenWrt 25.x
 Podkop
 sing-box
-firewall4 / nftables
-opkg / apk
-```
-
