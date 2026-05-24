@@ -3,7 +3,6 @@
 
 ## Установка в один клик
 
-
 ```sh
 wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
 ```
@@ -13,6 +12,9 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 ```sh
 wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/uninstall.sh | ash -s -- --yes
 ```
+
+> 
+> ## [NetHaven VPN Обсуждение ](https://t.me/+LZDsQJhUfcNhYWEy)
 
 <img width="1920" height="3158" alt="mSdqBmGcvZ" src="https://github.com/user-attachments/assets/a66e9324-ed35-4871-a00f-077a9f3cbaee" />
 
@@ -25,31 +27,37 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 - 📊 расширенный отчёт по системе;
 - 📄 просмотр логов из Telegram;
 - 🌐 глобальная диагностика Podkop;
-- 🔄 перезапуск Podkop и reboot роутера;
-- 📦 backup OpenWrt в Telegram;
+- 🔄 перезапуск Podkop;
+- 🔁 reboot роутера;
+- 📦 backup OpenWrt прямо в Telegram;
 - 👨‍👩‍👧 родительский контроль устройств;
 - 🔗 управление URLTest / VLESS ссылками;
+- 📡 проверка доступности proxy-ссылок;
+- ✅ включение URLTest из Telegram;
+- ♻️ применение выбранной URLTest-ссылки;
 - ⬆️ обновление Podkop;
 - 🤖 обновление самого бота;
 - 🖥️ LuCI-страница настроек;
-- 🔀 multi-router режим panel / worker.
+- 🌙 тихие часы для авто-уведомлений;
+- 🔀 multi-router режим panel / worker;
+- ❓ кнопка Помощь выводит список команд текстом.
 
 ---
 
 ## Главное меню
 
 ```text
-🟢 Статус
-🔄 Рестарт
-📄 Посмотреть логи
-🌐 Получить глобальную проверку
-📊 Отчёт
-📦 Backup OpenWrt
-👨‍👩‍👧 Родительский Контроль
-🔗 URLTest / VLESS
-⬆️ Обновить Podkop
-🤖 Обновить Бота
-❓ Помощь
+- 🟢 Статус
+- 🔄 Рестарт
+- 📄 Посмотреть логи
+- 🌐 Получить глобальную проверку
+- 📊 Отчёт
+- 📦 Backup OpenWrt
+- 👨‍👩‍👧 Родительский Контроль
+- 🔗 URLTest / VLESS
+- ⬆️ Обновить Podkop
+- 🤖 Обновить Бота
+- ❓ Помощь
 ```
 
 ---
