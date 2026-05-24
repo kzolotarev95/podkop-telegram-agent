@@ -1,17 +1,12 @@
 #!/bin/sh
-# REPO_ROOT_INSTALL_V4
-# podkop-telegram-agent one-link installer/updater from repository root.
-# This script does NOT use GitHub Releases.
+# podkop-telegram-agent one-link installer/updater for OpenWrt 24/25.
+# Downloads the latest GitHub Release asset with a stable filename and runs the bundled installer.
 # Usage:
-#   wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/install.sh | ash -s -- --yes
+#   wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/online-install.sh | ash -s -- --yes
 
 REPO="${PODKOP_TG_REPO:-kzolotarev95/podkop-telegram-agent}"
-BRANCH="${PODKOP_TG_BRANCH:-main}"
 ASSET="${PODKOP_TG_ASSET:-podkop-telegram-agent-github-release.tar.gz}"
-BASE_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${ASSET}"
-# cache-bust for GitHub/raw/proxy caches
-TS="$(date +%s 2>/dev/null || echo 0)"
-URL="${PODKOP_TG_URL:-${BASE_URL}?t=${TS}}"
+URL="${PODKOP_TG_URL:-https://github.com/${REPO}/releases/latest/download/${ASSET}}"
 WORKDIR="${PODKOP_TG_WORKDIR:-/tmp/podkop-telegram-agent-online}"
 ARCHIVE="/tmp/${ASSET}"
 PKGDIR="/tmp/podkop-telegram-agent"
@@ -37,12 +32,9 @@ download() {
 [ -f /etc/openwrt_release ] || log "WARN: /etc/openwrt_release not found; continuing anyway."
 have tar || fail "tar not found"
 
-log "podkop-telegram-agent installer"
-log "Marker: REPO_ROOT_INSTALL_V4"
-log "Mode: GitHub repository root, no Releases"
-log "Archive URL: $BASE_URL"
-
-download "$URL" "$ARCHIVE" || fail "download failed. Check internet/DNS/GitHub/raw.githubusercontent.com access."
+log "Downloading latest podkop-telegram-agent release..."
+log "$URL"
+download "$URL" "$ARCHIVE" || fail "download failed. Check internet/DNS/GitHub access."
 
 rm -rf "$WORKDIR" "$PKGDIR"
 mkdir -p "$WORKDIR" || fail "cannot create $WORKDIR"
