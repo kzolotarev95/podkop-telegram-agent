@@ -14,7 +14,8 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/main/uninstall.sh | ash -s -- --yes
 ```
 
-<img width="1920" height="2819" alt="o62GZUo78J" src="https://github.com/user-attachments/assets/44901540-90e0-4299-b35e-c2a5e11994e5" />
+<img width="1920" height="3158" alt="mSdqBmGcvZ" src="https://github.com/user-attachments/assets/a66e9324-ed35-4871-a00f-077a9f3cbaee" />
+
 
 
 
