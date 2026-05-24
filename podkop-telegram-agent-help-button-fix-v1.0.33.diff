@@ -1,0 +1,28 @@
+diff -ruN v132/files/usr/bin/podkop-telegram-agent v133/files/usr/bin/podkop-telegram-agent
+--- v132/files/usr/bin/podkop-telegram-agent
++++ v133/files/usr/bin/podkop-telegram-agent
+@@ -5,6 +5,7 @@
+ # FEATURE_PACK_V130: Support Bundle, Tunnel Health, Active Outbound Probe, Admins, update info, bot transport, Podkop section switch.
+ # URLTEST_REAL_FIX_V131: robust Podkop URLTest/VLESS UCI list handling and apply flow.
+ # QUIET_HOURS_V132: configurable night quiet hours for automatic alerts.
++# HELP_BUTTON_TEXT_FIX_V133: Help button sends command list as text, not header-only photo.
+ BOT_VERSION="v1.0.9"
+@@
++help_commands_text_fixed() {
++    # Compact help text under Telegram 4096-byte limit.
++    # Keeps /start as image/menu only, while ❓ Помощь and /help return commands.
++}
++
++send_help_commands_fixed() {
++    # Sends help text directly with sendMessage and main keyboard markup.
++    # Does not call maybe_send_button_header(), so pressing Help cannot result
++    # in a header-only photo response.
++}
++
+ text_to_command() {
+@@
++        "❓ Помощь"|"Помощь"|"❔ Помощь"|"📘 Помощь") echo "/help"; return ;; # HELP_BUTTON_TEXT_FIX_V133_MENU_MAP
+@@
+         /help)
++            send_help_commands_fixed "$chat"
++            return
