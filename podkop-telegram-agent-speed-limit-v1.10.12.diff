@@ -1,0 +1,767 @@
+diff -ruN orig_v11011/podkop-telegram-agent/RELEASE_NOTES.md release_v11012/podkop-telegram-agent/RELEASE_NOTES.md
+--- orig_v11011/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-24 07:36:14.000000000 +0000
++++ release_v11012/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-24 20:26:14.836135229 +0000
+@@ -1,3 +1,14 @@
++# v1.10.12 — Speed limit for static devices
++
++- Added Telegram menu `🚦 Лимит скорости`.
++- Added static DHCP device buttons for fast speed limiting.
++- Added presets: `64 КБ/с`, `128 КБ/с`, `256 КБ/с`, `512 КБ/с`, `1 МБ/с`, `2 МБ/с`.
++- Added commands: `/speed`, `/speeddevice`, `/speedset`, `/speedoff`, `/speedlimits`, `/speedapply`.
++- Rules are applied through nftables tables: `podkop_tg_speed`, `podkop_tg_speed_bridge`, `podkop_tg_speed_ingress`.
++- Visible version: `Podkop Telegram Agent v1.10.12`.
++
++---
++
+ ## v1.0.26 - router-name rollback/fix
+ - Visible version set back to `Podkop Telegram Agent v1.0.8`.
+ - Router name auto-fill fixed: `NanoPiR3S -> nanopir3s`, `RAX1 -> rax1`.
+diff -ruN orig_v11011/podkop-telegram-agent/files/etc/config/podkop_tg release_v11012/podkop-telegram-agent/files/etc/config/podkop_tg
+--- orig_v11011/podkop-telegram-agent/files/etc/config/podkop_tg	2026-05-24 07:30:15.000000000 +0000
++++ release_v11012/podkop-telegram-agent/files/etc/config/podkop_tg	2026-05-24 20:25:52.932978178 +0000
+@@ -24,3 +24,4 @@
+         option ping_host '1.1.1.1'
+         option foreign_hold_seconds '90'
+         option device_control '1'
++        option speed_control '1'
+diff -ruN orig_v11011/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent release_v11012/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+--- orig_v11011/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-24 07:36:38.000000000 +0000
++++ release_v11012/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-24 20:25:15.025304757 +0000
+@@ -4,8 +4,9 @@
+ # Dependencies: ash, curl, jq, uci, logread.
+ # QUIET_STATUS_V11010: quiet-hours status text shows active/inactive; default 23:00-08:00; mode queue/drop.
+ # HELP_BUTTON_OUTPUT_V11011: Help button and /help send plain chunked command list, no header-only response.
++# SPEED_LIMIT_V11012: Telegram speed limiter for static DHCP devices via nft limit rules.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+-BOT_VERSION="v1.10.11"
++BOT_VERSION="v1.10.12"
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+@@ -25,6 +26,8 @@
+ ACCESS_RULES_FILE="/etc/podkop-telegram-agent/access_rules.conf"
+ ACCESS_MANUAL_FILE="/etc/podkop-telegram-agent/access_manual.conf"
+ ACCESS_LAST_FILE="/tmp/podkop_tg_access_last"
++SPEED_RULES_FILE="/etc/podkop-telegram-agent/speed_rules.conf"
++SPEED_LAST_FILE="/tmp/podkop_tg_speed_last"
+ DONATE_URL="https://t.me/kzolotarev95"
+ DEFAULT_HEADER_IMAGE_PATH="/etc/podkop-telegram-agent/header.jpg"
+ DEFAULT_BOT_MODE="standalone"
+@@ -57,6 +60,7 @@
+     PING_HOST="$(uci -q get "$CONFIG.$SECTION.ping_host")"
+     FOREIGN_HOLD_SECONDS="$(uci -q get "$CONFIG.$SECTION.foreign_hold_seconds")"
+     DEVICE_CONTROL="$(uci -q get "$CONFIG.$SECTION.device_control")"
++    SPEED_CONTROL="$(uci -q get "$CONFIG.$SECTION.speed_control")"
+ 
+     [ -z "$ENABLED" ] && ENABLED=1
+     if is_bad_router_name "$ROUTER_NAME"; then
+@@ -88,6 +92,7 @@
+     case "$ALERT_QUIET_MODE" in queue|drop) ;; *) ALERT_QUIET_MODE="queue" ;; esac
+     [ -z "$PING_HOST" ] && PING_HOST="1.1.1.1"
+     [ -z "$DEVICE_CONTROL" ] && DEVICE_CONTROL=1
++    [ -z "$SPEED_CONTROL" ] && SPEED_CONTROL=1
+     [ -z "$PODKOP_SECTION" ] && PODKOP_SECTION="main"
+     case "$FOREIGN_HOLD_SECONDS" in
+         ''|*[!0-9]*) FOREIGN_HOLD_SECONDS=90 ;;
+@@ -113,7 +118,7 @@
+ 
+ keyboard_json() {
+     cat <<'JSON'
+-{"keyboard":[[{"text":"🟢 Статус"},{"text":"🔄 Рестарт"}],[{"text":"📄 Посмотреть логи"},{"text":"🌐 Получить глобальную проверку"}],[{"text":"📊 Отчёт"},{"text":"📦 Backup OpenWrt"}],[{"text":"👨‍👩‍👧 Родительский Контроль"},{"text":"🔗 URLTest / VLESS"}],[{"text":"⬆️ Обновить Podkop"},{"text":"🤖 Обновить Бота"}],[{"text":"❓ Помощь"}]],"resize_keyboard":true,"one_time_keyboard":false}
++{"keyboard":[[{"text":"🟢 Статус"},{"text":"🔄 Рестарт"}],[{"text":"📄 Посмотреть логи"},{"text":"🌐 Получить глобальную проверку"}],[{"text":"📊 Отчёт"},{"text":"📦 Backup OpenWrt"}],[{"text":"👨‍👩‍👧 Родительский Контроль"},{"text":"🚦 Лимит скорости"}],[{"text":"🔗 URLTest / VLESS"},{"text":"⬆️ Обновить Podkop"}],[{"text":"🤖 Обновить Бота"},{"text":"❓ Помощь"}]],"resize_keyboard":true,"one_time_keyboard":false}
+ JSON
+ }
+ 
+@@ -175,6 +180,35 @@
+     printf '{"keyboard":[[{"text":"🕒 Будни 14-20 %s %s"}],[{"text":"🌙 Ночь 22-07 %s %s"}],[{"text":"🚫 Блокировать %s %s"},{"text":"✅ Разблокировать %s %s"}],[{"text":"🗑 Удалить правило %s %s"}],[{"text":"🔙 Доступ %s"},{"text":"🔙 Назад"}]],"resize_keyboard":true,"one_time_keyboard":false}' "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r"
+ }
+ 
++speed_keyboard_json() {
++    local r line name macs ip lease_name lease_mac active btn shown mac_short name_short
++    r="$(printf '%s' "$ROUTER_NAME" | json_escape_text)"
++    printf '{"keyboard":[[{"text":"📘 Помощь скорости %s"},{"text":"📌 Активные лимиты %s"}],[{"text":"🔙 Назад"}]' "$r" "$r"
++    shown=0
++    access_static_devices 2>/dev/null | while IFS='|' read -r name macs ip lease_name lease_mac active; do
++        [ -n "$ip" ] || continue
++        shown=$((shown + 1))
++        [ "$shown" -gt 20 ] && continue
++        [ -z "$macs" ] && macs="$lease_mac"
++        [ -z "$macs" ] && macs="-"
++        [ -z "$name" ] && name="device"
++        name_short="$(printf '%s' "$name" | sed 's/[|[:cntrl:]]/_/g; s/^ *//; s/ *$//')"
++        mac_short="$(printf '%s' "$macs" | cut -d',' -f1)"
++        btn="🚦 ${ROUTER_NAME} | ${name_short} | ${ip} | ${mac_short}"
++        btn="$(printf '%s' "$btn" | json_escape_text)"
++        printf ',[{"text":"%s"}]' "$btn"
++    done
++    printf '],"resize_keyboard":true,"one_time_keyboard":false}'
++}
++
++speed_device_keyboard_json() {
++    local ip="$1" r eip
++    r="$(printf '%s' "$ROUTER_NAME" | json_escape_text)"
++    eip="$(printf '%s' "$ip" | json_escape_text)"
++    printf '{"keyboard":[[{"text":"🐢 64 КБ/с %s %s"},{"text":"🐢 128 КБ/с %s %s"}],[{"text":"🚶 256 КБ/с %s %s"},{"text":"🚶 512 КБ/с %s %s"}],[{"text":"🚀 1 МБ/с %s %s"},{"text":"🚀 2 МБ/с %s %s"}],[{"text":"✅ Без лимита %s %s"}],[{"text":"🔙 Скорость %s"},{"text":"🔙 Назад"}]],"resize_keyboard":true,"one_time_keyboard":false}' "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r" "$eip" "$r"
++}
++
++
+ urltest_keyboard_json() {
+     local r
+     r="$(printf '%s' "$ROUTER_NAME" | json_escape_text)"
+@@ -362,6 +396,9 @@
+         access) echo "👨‍👩‍👧" ;;
+         accesshelp) echo "📘" ;;
+         accessblocked) echo "📌" ;;
++        speed) echo "🚦" ;;
++        speedhelp) echo "📘" ;;
++        speedlimits) echo "📌" ;;
+         urltest) echo "🔗" ;;
+         podkopupdate) echo "⬆️" ;;
+         botupdate) echo "🤖" ;;
+@@ -380,6 +417,9 @@
+         access) echo "родительского контроля" ;;
+         accesshelp) echo "справки по родительскому контролю" ;;
+         accessblocked) echo "активных блокировок родительского контроля" ;;
++        speed) echo "ограничения скорости" ;;
++        speedhelp) echo "справки по ограничению скорости" ;;
++        speedlimits) echo "активных лимитов скорости" ;;
+         urltest) echo "URLTest/VLESS конфигураций" ;;
+         podkopupdate) echo "обновления Podkop" ;;
+         botupdate) echo "обновления Telegram-бота" ;;
+@@ -431,7 +471,7 @@
+ 
+ panel_choose_action() {
+     local action="$1"
+-    case "$action" in status|report|logs|diag|restart|backup|access|accesshelp|accessblocked|urltest|podkopupdate|botupdate) return 0 ;; *) return 1 ;; esac
++    case "$action" in status|report|logs|diag|restart|backup|access|accesshelp|accessblocked|speed|speedhelp|speedlimits|urltest|podkopupdate|botupdate) return 0 ;; *) return 1 ;; esac
+ }
+ 
+ header_image_type() {
+@@ -2915,6 +2955,335 @@
+     access_apply
+ }
+ 
++speed_ensure_files() {
++    mkdir -p /etc/podkop-telegram-agent 2>/dev/null || return 1
++    [ -f "$SPEED_RULES_FILE" ] || : > "$SPEED_RULES_FILE"
++    chmod 0600 "$SPEED_RULES_FILE" 2>/dev/null || true
++    return 0
++}
++
++speed_norm_rate() {
++    local raw="$1" v num unit
++    [ -n "$raw" ] || return 1
++    v="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:]]//g; s#/s##g; s#/сек##g; s#сек##g; s#байт##g')"
++    v="$(printf '%s' "$v" | sed 's/кбайт/k/g; s/кб/k/g; s/kb/k/g; s/kbyte/k/g; s/kbytes/k/g; s/мбайт/m/g; s/мб/m/g; s/mb/m/g; s/mbyte/m/g; s/mbytes/m/g')"
++    case "$v" in
++        *m) unit="m"; num="${v%m}" ;;
++        *k) unit="k"; num="${v%k}" ;;
++        *) unit="k"; num="$v" ;;
++    esac
++    case "$num" in ''|*[!0-9]*) return 1 ;; esac
++    [ "$num" -gt 0 ] 2>/dev/null || return 1
++    [ "$num" -gt 100000 ] 2>/dev/null && return 1
++    printf '%s%s' "$num" "$unit"
++}
++
++speed_rate_label() {
++    local r="$1" num unit
++    r="$(speed_norm_rate "$r")" || return 1
++    unit="${r##*[0-9]}"
++    num="${r%$unit}"
++    case "$unit" in
++        m) printf '%s МБ/с' "$num" ;;
++        *) printf '%s КБ/с' "$num" ;;
++    esac
++}
++
++speed_rate_nft() {
++    local r="$1" num unit
++    r="$(speed_norm_rate "$r")" || return 1
++    unit="${r##*[0-9]}"
++    num="${r%$unit}"
++    case "$unit" in
++        m) printf '%s mbytes/second' "$num" ;;
++        *) printf '%s kbytes/second' "$num" ;;
++    esac
++}
++
++speed_name_for_ip() {
++    access_name_for_ip "$1" 2>/dev/null || printf 'dev_%s' "$(printf '%s' "$1" | tr . _)"
++}
++
++speed_rule_line_by_ip() {
++    local ip="$1"
++    speed_ensure_files || return 1
++    ip="$(access_normalize_ipv4 "$ip" 2>/dev/null || printf '%s' "$ip")"
++    awk -F'|' -v ip="$ip" '$1 == "1" && $3 == ip { print; found=1; exit } END { if (!found) exit 1 }' "$SPEED_RULES_FILE" 2>/dev/null
++}
++
++speed_active_entries() {
++    local enabled name ip rate mac auto_macs norm_rate one_mac
++    speed_ensure_files || return 1
++    while IFS='|' read -r enabled name ip rate mac rest; do
++        [ "$enabled" = "1" ] || continue
++        access_valid_ipv4 "$ip" || continue
++        ip="$(access_normalize_ipv4 "$ip" 2>/dev/null || printf '%s' "$ip")"
++        norm_rate="$(speed_norm_rate "$rate" 2>/dev/null || true)"
++        [ -n "$norm_rate" ] || continue
++        auto_macs="$mac"
++        [ -z "$auto_macs" ] && auto_macs="$(access_macs_for_ip "$ip" 2>/dev/null || true)"
++        printf '%s||%s\n' "$ip" "$norm_rate"
++        access_all_macs_for_ip "$ip" "$auto_macs" | while IFS= read -r one_mac; do
++            access_valid_mac "$one_mac" && printf '%s|%s|%s\n' "$ip" "$one_mac" "$norm_rate"
++        done
++    done < "$SPEED_RULES_FILE" 2>/dev/null
++}
++
++speed_firewall_clear() {
++    if command -v nft >/dev/null 2>&1; then
++        nft delete table inet podkop_tg_speed >/dev/null 2>&1 || true
++        nft delete table bridge podkop_tg_speed_bridge >/dev/null 2>&1 || true
++        nft delete table netdev podkop_tg_speed_ingress >/dev/null 2>&1 || true
++    fi
++}
++
++speed_nft_add_limit_rule() {
++    local family="$1" table="$2" chain="$3" ip="$4" mac="$5" rate="$6" nft_rate ok=1
++    nft_rate="$(speed_rate_nft "$rate" 2>/dev/null)" || return 1
++    if access_valid_ipv4 "$ip"; then
++        nft add rule "$family" "$table" "$chain" ip saddr "$ip" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
++        nft add rule "$family" "$table" "$chain" ip daddr "$ip" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
++    fi
++    if access_valid_mac "$mac"; then
++        nft add rule "$family" "$table" "$chain" ether saddr "$mac" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
++        nft add rule "$family" "$table" "$chain" ether daddr "$mac" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
++    fi
++    return "$ok"
++}
++
++speed_nft_add_ingress_limit_rule() {
++    local family="$1" table="$2" chain="$3" ip="$4" mac="$5" rate="$6" nft_rate ok=1
++    nft_rate="$(speed_rate_nft "$rate" 2>/dev/null)" || return 1
++    if access_valid_ipv4 "$ip"; then
++        nft add rule "$family" "$table" "$chain" ip saddr "$ip" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
++    fi
++    if access_valid_mac "$mac"; then
++        nft add rule "$family" "$table" "$chain" ether saddr "$mac" limit rate over $nft_rate counter drop >/dev/null 2>&1 && ok=0
++    fi
++    return "$ok"
++}
++
++speed_firewall_apply_file() {
++    local file="$1" ip mac rate rc=1 added=0 iface chain
++    speed_firewall_clear
++    [ -s "$file" ] || return 0
++    command -v nft >/dev/null 2>&1 || return 1
++
++    if access_nft_add_table inet podkop_tg_speed; then
++        access_nft_create_chain inet podkop_tg_speed prerouting prerouting -420 || true
++        access_nft_create_chain inet podkop_tg_speed forward forward -420 || true
++        access_nft_create_chain inet podkop_tg_speed output output -420 || true
++        while IFS='|' read -r ip mac rate; do
++            [ -n "$ip" ] || continue
++            for chain in prerouting forward output; do
++                if nft list chain inet podkop_tg_speed "$chain" >/dev/null 2>&1; then
++                    speed_nft_add_limit_rule inet podkop_tg_speed "$chain" "$ip" "$mac" "$rate" && added=$((added + 1))
++                fi
++            done
++        done < "$file"
++    fi
++
++    if access_nft_add_table bridge podkop_tg_speed_bridge; then
++        access_nft_create_chain bridge podkop_tg_speed_bridge prerouting prerouting -420 || true
++        access_nft_create_chain bridge podkop_tg_speed_bridge forward forward -420 || true
++        while IFS='|' read -r ip mac rate; do
++            [ -n "$ip" ] || continue
++            for chain in prerouting forward; do
++                if nft list chain bridge podkop_tg_speed_bridge "$chain" >/dev/null 2>&1; then
++                    speed_nft_add_limit_rule bridge podkop_tg_speed_bridge "$chain" "$ip" "$mac" "$rate" && added=$((added + 1))
++                fi
++            done
++        done < "$file"
++    fi
++
++    if access_nft_add_table netdev podkop_tg_speed_ingress; then
++        access_lan_ifaces | while IFS= read -r iface; do
++            [ -n "$iface" ] || continue
++            chain="$(access_nft_iface_chain_name "$iface")"
++            nft list chain netdev podkop_tg_speed_ingress "$chain" >/dev/null 2>&1 || \
++                nft "add chain netdev podkop_tg_speed_ingress $chain { type filter hook ingress device \"$iface\" priority -420; policy accept; }" >/dev/null 2>&1 || true
++            if nft list chain netdev podkop_tg_speed_ingress "$chain" >/dev/null 2>&1; then
++                while IFS='|' read -r ip mac rate; do
++                    [ -n "$ip" ] || continue
++                    speed_nft_add_ingress_limit_rule netdev podkop_tg_speed_ingress "$chain" "$ip" "$mac" "$rate" && echo ok >/tmp/podkop_tg_speed_added_$$
++                done < "$file"
++            fi
++        done
++        if [ -f /tmp/podkop_tg_speed_added_$$ ]; then
++            added=$((added + 1))
++            rm -f /tmp/podkop_tg_speed_added_$$ 2>/dev/null || true
++        fi
++    fi
++
++    [ "$added" -gt 0 ] 2>/dev/null && rc=0
++    return "$rc"
++}
++
++speed_apply() {
++    local tmp state old rc
++    if [ "$SPEED_CONTROL" != "1" ]; then
++        speed_firewall_clear
++        return 0
++    fi
++    speed_ensure_files || return 1
++    tmp="/tmp/podkop_tg_speed_entries_$$"
++    speed_active_entries | awk -F'|' 'NF { k=$1 "|" $2 "|" $3; if ($1 != "" && !seen[k]++) print $0 }' > "$tmp"
++    speed_firewall_apply_file "$tmp"
++    rc=$?
++    state="$(awk -F'|' 'NF && $1 != "" { if (!seen[$1]++) printf "%s=%s ", $1, $3 }' "$tmp" 2>/dev/null | sed 's/[[:space:]]*$//')"
++    old="$(cat "$SPEED_LAST_FILE" 2>/dev/null)"
++    if [ "$state" != "$old" ]; then
++        log "speed limit applied backend=nft rules=${state:-none}"
++        printf '%s\n' "$state" > "$SPEED_LAST_FILE"
++    fi
++    rm -f "$tmp"
++    return "$rc"
++}
++
++speed_set_limit_by_ip() {
++    local ip="$1" rate="$2" name mac tmp norm_rate
++    access_valid_ipv4 "$ip" || return 3
++    ip="$(access_normalize_ipv4 "$ip" 2>/dev/null || printf '%s' "$ip")"
++    norm_rate="$(speed_norm_rate "$rate")" || return 4
++    name="$(speed_name_for_ip "$ip")"
++    mac="$(access_macs_for_ip "$ip" 2>/dev/null || true)"
++    speed_ensure_files || return 1
++    tmp="/tmp/podkop_tg_speed_rules_$$"
++    awk -F'|' -v ip="$ip" '$3 != ip { print }' "$SPEED_RULES_FILE" > "$tmp" 2>/dev/null || true
++    printf '1|%s|%s|%s|%s\n' "$name" "$ip" "$norm_rate" "$mac" >> "$tmp"
++    mv "$tmp" "$SPEED_RULES_FILE" || return 1
++    chmod 0600 "$SPEED_RULES_FILE" 2>/dev/null || true
++    speed_apply
++}
++
++speed_delete_limit_by_ip() {
++    local ip="$1" tmp
++    access_valid_ipv4 "$ip" || return 3
++    ip="$(access_normalize_ipv4 "$ip" 2>/dev/null || printf '%s' "$ip")"
++    speed_ensure_files || return 1
++    tmp="/tmp/podkop_tg_speed_rules_$$"
++    awk -F'|' -v ip="$ip" '$3 != ip { print }' "$SPEED_RULES_FILE" > "$tmp" 2>/dev/null || true
++    mv "$tmp" "$SPEED_RULES_FILE" || return 1
++    speed_apply
++}
++
++speed_rules_text() {
++    local name ip rate label enabled mac rest out found
++    speed_ensure_files || true
++    found=0
++    out=""
++    while IFS='|' read -r enabled name ip rate mac rest; do
++        [ "$enabled" = "1" ] || continue
++        access_valid_ipv4 "$ip" || continue
++        label="$(speed_rate_label "$rate" 2>/dev/null || printf '%s' "$rate")"
++        found=$((found + 1))
++        out="${out}• <b>$(printf '%s' "${name:-device}" | escape_html)</b> — <code>$(printf '%s' "$ip" | escape_html)</code> → <code>$(printf '%s' "$label" | escape_html)</code>\n"
++    done < "$SPEED_RULES_FILE" 2>/dev/null
++    if [ "$found" = "0" ]; then
++        printf 'Активных лимитов нет.\n'
++    else
++        printf '%b' "$out"
++    fi
++}
++
++speed_static_devices_text() {
++    local name macs ip lease_name lease_mac active rule rate label shown
++    shown=0
++    access_static_devices | while IFS='|' read -r name macs ip lease_name lease_mac active; do
++        [ -n "$ip" ] || continue
++        shown=$((shown + 1))
++        [ "$shown" -gt 20 ] && continue
++        rule="$(speed_rule_line_by_ip "$ip" 2>/dev/null || true)"
++        rate="$(printf '%s' "$rule" | awk -F'|' '{ print $4 }')"
++        label="без лимита"
++        [ -n "$rate" ] && label="$(speed_rate_label "$rate" 2>/dev/null || printf '%s' "$rate")"
++        printf '• <b>%s</b> — <code>%s</code> — <code>%s</code> — %s\n' \
++            "$(printf '%s' "${name:-device}" | escape_html)" \
++            "$(printf '%s' "$ip" | escape_html)" \
++            "$(printf '%s' "${active:-unknown}" | escape_html)" \
++            "$(printf '%s' "$label" | escape_html)"
++    done
++}
++
++speed_status_text() {
++    local header
++    header="$(router_header)"
++    cat <<EOF
++🚦 <b>${header} Ограничение скорости устройств</b>
++
++Работает для статических DHCP-устройств из <code>/etc/config/dhcp</code>.
++Метод: <code>nft limit rate over ... drop</code>
++
++<b>Активные лимиты:</b>
++$(speed_rules_text)
++<b>Статические устройства:</b>
++$(speed_static_devices_text)
++
++Нажми на устройство ниже, потом выбери скорость: 64 КБ/с, 128 КБ/с, 256 КБ/с, 512 КБ/с, 1 МБ/с или 2 МБ/с.
++EOF
++}
++
++speed_device_detail_text() {
++    local ip="$1" line name macs lease_name lease_mac active rule rate label header
++    header="$(router_header)"
++    if ! access_valid_ipv4 "$ip"; then
++        printf '❌ Неверный IPv4.'
++        return 0
++    fi
++    ip="$(access_normalize_ipv4 "$ip" 2>/dev/null || printf '%s' "$ip")"
++    line="$(access_static_device_by_ip "$ip" 2>/dev/null || true)"
++    name="$(printf '%s' "$line" | awk -F'|' '{ print $1 }')"
++    macs="$(printf '%s' "$line" | awk -F'|' '{ print $2 }')"
++    lease_mac="$(printf '%s' "$line" | awk -F'|' '{ print $5 }')"
++    active="$(printf '%s' "$line" | awk -F'|' '{ print $6 }')"
++    [ -z "$name" ] && name="$(speed_name_for_ip "$ip")"
++    [ -z "$macs" ] && macs="$lease_mac"
++    [ -z "$active" ] && active="unknown"
++    rule="$(speed_rule_line_by_ip "$ip" 2>/dev/null || true)"
++    rate="$(printf '%s' "$rule" | awk -F'|' '{ print $4 }')"
++    label="без лимита"
++    [ -n "$rate" ] && label="$(speed_rate_label "$rate" 2>/dev/null || printf '%s' "$rate")"
++    cat <<EOF
++🚦 <b>${header} Лимит скорости устройства</b>
++
++Устройство: <b>$(printf '%s' "$name" | escape_html)</b>
++IP: <code>$(printf '%s' "$ip" | escape_html)</code>
++MAC: <code>$(printf '%s' "${macs:-unknown}" | escape_html)</code>
++Статус DHCP: <code>$(printf '%s' "$active" | escape_html)</code>
++Текущий лимит: <code>$(printf '%s' "$label" | escape_html)</code>
++
++Выбери скорость кнопкой ниже.
++Команда вручную:
++<code>/speedset ${ROUTER_NAME} ${ip} 64kb</code>
++<code>/speedoff ${ROUTER_NAME} ${ip}</code>
++EOF
++}
++
++speed_help_text() {
++    local router_html
++    router_html="$(printf '%s' "$ROUTER_NAME" | escape_html)"
++    cat <<EOF
++🚦 <b>Помощь по ограничению скорости</b>
++
++<code>/speed ${router_html}</code> — открыть список статических устройств кнопками
++<code>/speeddevice ${router_html} 192.168.1.50</code> — открыть карточку устройства
++<code>/speedset ${router_html} 192.168.1.50 64kb</code> — поставить лимит 64 КБ/с
++<code>/speedset ${router_html} 192.168.1.50 1mb</code> — поставить лимит 1 МБ/с
++<code>/speedoff ${router_html} 192.168.1.50</code> — снять лимит
++<code>/speedlimits ${router_html}</code> — показать активные лимиты
++<code>/speedapply ${router_html}</code> — пере применить nft-правила
++
++Поддерживаются значения: <code>64kb</code>, <code>128kb</code>, <code>256kb</code>, <code>512kb</code>, <code>1mb</code>, <code>2mb</code>.
++
++Важно: лимит работает через nftables и ограничивает трафик сбросом пакетов после превышения скорости. Для точного QoS/шейпинга нужен отдельный SQM/tc, но для быстрого ограничения устройства этого достаточно.
++EOF
++}
++
++send_speed_status() { send_message_markup "$1" "$(speed_status_text)" "$(speed_keyboard_json)"; }
++send_speed_device() { send_message_markup "$1" "$(speed_device_detail_text "$2")" "$(speed_device_keyboard_json "$2")"; }
++send_speed_help() { send_message_markup "$1" "$(speed_help_text)" "$(speed_keyboard_json)"; }
++
++
+ access_examples_text() {
+     local header router_html
+     header="$(router_header)"
+@@ -3183,7 +3552,7 @@
+     local cmd="$1" arg1="$2"
+     cmd="${cmd%%@*}"
+     case "$cmd" in
+-        /status|/restart|/rebootrouter|/podkopupdate|/botupdate|/logs|/report|/diag|/health|/check|/backup|/testreport|/dailytest|/testdaily|/donate|/access|/accesslist|/accesshelp|/accessblocked|/accessblocks|/blocked|/accessdevice|/accessset|/parental|/kids|/devicecontrol|/accessadd|/accessdel|/accessblock|/accessunblock|/accesson|/accessoff|/accessapply|/urltest|/vless|/servers|/urlhelp|/urlping|/urluse|/urlteston|/urladd|/urldel|/urlapply)
++        /status|/restart|/rebootrouter|/podkopupdate|/botupdate|/logs|/report|/diag|/health|/check|/backup|/testreport|/dailytest|/testdaily|/donate|/access|/accesslist|/accesshelp|/accessblocked|/accessblocks|/blocked|/accessdevice|/accessset|/parental|/kids|/devicecontrol|/accessadd|/accessdel|/accessblock|/accessunblock|/accesson|/accessoff|/accessapply|/speed|/speedlist|/speedhelp|/speedlimits|/speeddevice|/speedset|/speedoff|/speedapply|/limit|/ratelimit|/urltest|/vless|/servers|/urlhelp|/urlping|/urluse|/urlteston|/urladd|/urldel|/urlapply)
+             [ -z "$arg1" ] && return 0
+             target_is_local_router "$arg1" && return 0
+             return 1
+@@ -3205,7 +3574,7 @@
+     case "$cmd" in
+         /start|/help|/myid|/choose)
+             return 0 ;;
+-        /status|/restart|/rebootrouter|/podkopupdate|/botupdate|/logs|/report|/diag|/health|/check|/backup|/testreport|/dailytest|/testdaily|/donate|/access|/accesslist|/accesshelp|/accessblocked|/accessblocks|/blocked|/accessdevice|/accessset|/parental|/kids|/devicecontrol|/accessadd|/accessdel|/accessblock|/accessunblock|/accesson|/accessoff|/accessapply|/urltest|/vless|/servers|/urlhelp|/urlping|/urluse|/urlteston|/urladd|/urldel|/urlapply)
++        /status|/restart|/rebootrouter|/podkopupdate|/botupdate|/logs|/report|/diag|/health|/check|/backup|/testreport|/dailytest|/testdaily|/donate|/access|/accesslist|/accesshelp|/accessblocked|/accessblocks|/blocked|/accessdevice|/accessset|/parental|/kids|/devicecontrol|/accessadd|/accessdel|/accessblock|/accessunblock|/accesson|/accessoff|/accessapply|/speed|/speedlist|/speedhelp|/speedlimits|/speeddevice|/speedset|/speedoff|/speedapply|/limit|/ratelimit|/urltest|/vless|/servers|/urlhelp|/urlping|/urluse|/urlteston|/urladd|/urldel|/urlapply)
+             target_is_local_router "$arg1" && return 1
+             [ -z "$arg1" ] && return 0
+             return 1 ;;
+@@ -3280,6 +3649,36 @@
+         "📦 "*) r="${t#📦 }"; [ "$r" = "Backup OpenWrt" ] || [ "$r" = "Backup" ] && { { is_panel_mode || is_worker_mode; } && echo "/choose backup" || echo "/backup ${ROUTER_NAME}"; return; }; echo "/backup $r" ;;
+         "🚫 "*) r="${t#🚫 }"; [ "$r" = "Доступ устройств" ] && { { is_panel_mode || is_worker_mode; } && echo "/choose access" || echo "/access ${ROUTER_NAME}"; return; }; echo "/access $r" ;;
+         "👨‍👩‍👧 "*) r="${t#👨‍👩‍👧 }"; [ "$r" = "Родительский Контроль" ] || [ "$r" = "Родительский контроль" ] && { { is_panel_mode || is_worker_mode; } && echo "/choose access" || echo "/access ${ROUTER_NAME}"; return; }; echo "/access $r" ;;
++        "🚦 "*)
++            r="${t#🚦 }"
++            if [ "$r" = "Лимит скорости" ] || [ "$r" = "Скорость" ]; then
++                { is_panel_mode || is_worker_mode; } && echo "/choose speed" || echo "/speed ${ROUTER_NAME}"
++                return
++            fi
++            router="$(printf '%s' "$r" | awk -F'|' '{ gsub(/^ +| +$/, "", $1); print $1 }')"
++            ip="$(access_button_ip_from_text "$r" 2>/dev/null || true)"
++            if access_valid_ipv4 "$router"; then
++                router="$(access_normalize_ipv4 "$router" 2>/dev/null || printf '%s' "$router")"
++                echo "/speeddevice ${ROUTER_NAME} $router"
++            elif access_valid_ipv4 "$ip"; then
++                echo "/speeddevice $router $ip"
++            else
++                set -- $r
++                if access_valid_ipv4 "$1"; then ip="$(access_normalize_ipv4 "$1" 2>/dev/null || printf '%s' "$1")"; echo "/speeddevice ${ROUTER_NAME} $ip"; else echo "/speed $r"; fi
++            fi
++            ;;
++        "🐢 64 КБ/с "*) r="${t#🐢 64 КБ/с }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedset ${ROUTER_NAME} $1 64kb"; else echo "/speedset $1 $2 64kb"; fi ;;
++        "🐢 128 КБ/с "*) r="${t#🐢 128 КБ/с }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedset ${ROUTER_NAME} $1 128kb"; else echo "/speedset $1 $2 128kb"; fi ;;
++        "🚶 256 КБ/с "*) r="${t#🚶 256 КБ/с }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedset ${ROUTER_NAME} $1 256kb"; else echo "/speedset $1 $2 256kb"; fi ;;
++        "🚶 512 КБ/с "*) r="${t#🚶 512 КБ/с }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedset ${ROUTER_NAME} $1 512kb"; else echo "/speedset $1 $2 512kb"; fi ;;
++        "🚀 1 МБ/с "*) r="${t#🚀 1 МБ/с }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedset ${ROUTER_NAME} $1 1mb"; else echo "/speedset $1 $2 1mb"; fi ;;
++        "🚀 2 МБ/с "*) r="${t#🚀 2 МБ/с }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedset ${ROUTER_NAME} $1 2mb"; else echo "/speedset $1 $2 2mb"; fi ;;
++        "✅ Без лимита "*) r="${t#✅ Без лимита }"; set -- $r; if access_valid_ipv4 "$1"; then echo "/speedoff ${ROUTER_NAME} $1"; else echo "/speedoff $1 $2"; fi ;;
++        "🔙 Скорость "*) r="${t#🔙 Скорость }"; echo "/speed $r" ;;
++        "📘 Помощь скорости "*) r="${t#📘 Помощь скорости }"; echo "/speedhelp $r" ;;
++        "📘 Помощь скорости") echo "/speedhelp ${ROUTER_NAME}" ;;
++        "📌 Активные лимиты "*) r="${t#📌 Активные лимиты }"; echo "/speedlimits $r" ;;
++        "📌 Активные лимиты") echo "/speedlimits ${ROUTER_NAME}" ;;
+         "🔗 "*) r="${t#🔗 }"; [ "$r" = "URLTest / VLESS" ] && { { is_panel_mode || is_worker_mode; } && echo "/choose urltest" || echo "/urltest ${ROUTER_NAME}"; return; }; echo "/urltest $r" ;;
+         "📡 Проверить URLTest "*) r="${t#📡 Проверить URLTest }"; echo "/urlping $r" ;;
+         "📘 Помощь URLTest "*) r="${t#📘 Помощь URLTest }"; echo "/urlhelp $r" ;;
+@@ -3296,6 +3695,7 @@
+         "📊 Отчёт"|"Отчёт"|"Отчет") { is_panel_mode || is_worker_mode; } && echo "/choose report" || echo "/report ${ROUTER_NAME}" ;;
+         "📦 Backup OpenWrt"|"Backup OpenWrt"|"Бэкап OpenWrt"|"Backup"|"Бэкап") { is_panel_mode || is_worker_mode; } && echo "/choose backup" || echo "/backup ${ROUTER_NAME}" ;;
+         "🚫 Доступ устройств"|"Доступ устройств"|"Родительский контроль"|"Родительский Контроль"|"Блокировка устройств"|"👨‍👩‍👧 Родительский контроль"|"👨‍👩‍👧 Родительский Контроль") { is_panel_mode || is_worker_mode; } && echo "/choose access" || echo "/access ${ROUTER_NAME}" ;;
++        "🚦 Лимит скорости"|"Лимит скорости"|"Скорость"|"Ограничение скорости"|"Speed limit") { is_panel_mode || is_worker_mode; } && echo "/choose speed" || echo "/speed ${ROUTER_NAME}" ;;
+         "🔗 URLTest / VLESS"|"URLTest / VLESS"|"URLTest"|"VLESS"|"Ссылки VLESS") { is_panel_mode || is_worker_mode; } && echo "/choose urltest" || echo "/urltest ${ROUTER_NAME}" ;;
+         "⬆️ Обновить Podkop"|"Обновить Podkop"|"Обновить Podcop"|"Update Podkop") { is_panel_mode || is_worker_mode; } && echo "/choose podkopupdate" || echo "/podkopupdate ${ROUTER_NAME}" ;;
+         "🤖 Обновить Бота"|"Обновить Бота"|"Обновить бота"|"Update Bot") { is_panel_mode || is_worker_mode; } && echo "/choose botupdate" || echo "/botupdate ${ROUTER_NAME}" ;;
+@@ -3308,7 +3708,7 @@
+ 
+ is_header_menu_button() {
+     case "$1" in
+-        "🟢 Статус"|"Статус"|"📊 Отчёт"|"Отчёт"|"Отчет"|"🔄 Рестарт"|"Рестарт"|"📄 Посмотреть логи"|"Посмотреть логи"|"🌐 Получить глобальную проверку"|"📦 Backup OpenWrt"|"🚫 Доступ устройств"|"Доступ устройств"|"👨‍👩‍👧 Родительский Контроль"|"Родительский Контроль"|"🔗 URLTest / VLESS"|"URLTest / VLESS"|"⬆️ Обновить Podkop"|"Обновить Podkop"|"🤖 Обновить Бота"|"Обновить Бота"|/status*|/report*|/restart*|/rebootrouter*|/logs*|/diag*|/health*|/check*|/backup*|/urltest*|/vless*|/servers*|/urlhelp*|/urlping*|/urluse*|/urlteston*|/urladd*|/urldel*|/urlapply*|/podkopupdate*|/botupdate*)
++        "🟢 Статус"|"Статус"|"📊 Отчёт"|"Отчёт"|"Отчет"|"🔄 Рестарт"|"Рестарт"|"📄 Посмотреть логи"|"Посмотреть логи"|"🌐 Получить глобальную проверку"|"📦 Backup OpenWrt"|"🚫 Доступ устройств"|"Доступ устройств"|"👨‍👩‍👧 Родительский Контроль"|"Родительский Контроль"|"🚦 Лимит скорости"|"Лимит скорости"|"Скорость"|"🔗 URLTest / VLESS"|"URLTest / VLESS"|"⬆️ Обновить Podkop"|"Обновить Podkop"|"🤖 Обновить Бота"|"Обновить Бота"|/status*|/report*|/restart*|/rebootrouter*|/logs*|/diag*|/health*|/check*|/backup*|/speed*|/limit*|/ratelimit*|/urltest*|/vless*|/servers*|/urlhelp*|/urlping*|/urluse*|/urlteston*|/urladd*|/urldel*|/urlapply*|/podkopupdate*|/botupdate*)
+             return 0 ;;
+         *) return 1 ;;
+     esac
+@@ -3364,6 +3764,12 @@
+ /accessblock ${router_html} tv — заблокировать устройство сейчас
+ /accessunblock ${router_html} tv — снять ручную блокировку
+ /accessdel ${router_html} tv — удалить правило расписания
++
++/speed ${router_html} — ограничение скорости статических DHCP-устройств кнопками
++/speeddevice ${router_html} 192.168.1.50 — открыть карточку скорости устройства
++/speedset ${router_html} 192.168.1.50 64kb — ограничить до 64 КБ/с
++/speedoff ${router_html} 192.168.1.50 — снять лимит скорости
++/speedlimits ${router_html} — активные лимиты скорости
+ /testreport ${router_html} — тест ежедневного отчёта сейчас
+ /donate ${router_html} — донат скриптеру
+ /header ${router_html} — проверить картинку-шапку меню
+@@ -3851,6 +4257,93 @@
+                 send_message "$chat" "❌ ${header} Не удалось применить правила. Проверь nft/iptables."
+             fi
+             ;;
++        /speed|/speedlist|/limit|/ratelimit)
++            if is_panel_mode && [ -z "$arg1" ]; then
++                send_router_select "$chat" "speed"
++                return
++            fi
++            maybe_send_button_header "$chat" "$raw_text"
++            send_speed_status "$chat"
++            ;;
++        /speedhelp)
++            if is_panel_mode && [ -z "$arg1" ]; then
++                send_router_select "$chat" "speedhelp"
++                return
++            fi
++            maybe_send_button_header "$chat" "$raw_text"
++            send_speed_help "$chat"
++            ;;
++        /speedlimits)
++            if is_panel_mode && [ -z "$arg1" ]; then
++                send_router_select "$chat" "speedlimits"
++                return
++            fi
++            maybe_send_button_header "$chat" "$raw_text"
++            send_message_markup "$chat" "🚦 <b>${header} Активные лимиты скорости</b>
++
++$(speed_rules_text)" "$(speed_keyboard_json)"
++            ;;
++        /speeddevice)
++            set -- $text
++            shift
++            [ "$1" = "$ROUTER_NAME" ] && shift
++            dev_ip="$1"
++            if access_valid_ipv4 "$dev_ip"; then dev_ip="$(access_normalize_ipv4 "$dev_ip" 2>/dev/null || printf '%s' "$dev_ip")"; fi
++            if [ -z "$dev_ip" ]; then
++                send_message "$chat" "Формат: <code>/speeddevice ${router_html} 192.168.1.50</code>"
++                return
++            fi
++            maybe_send_button_header "$chat" "$raw_text"
++            send_speed_device "$chat" "$dev_ip"
++            ;;
++        /speedset)
++            set -- $text
++            shift
++            [ "$1" = "$ROUTER_NAME" ] && shift
++            dev_ip="$1"; dev_rate="$2"
++            if access_valid_ipv4 "$dev_ip"; then dev_ip="$(access_normalize_ipv4 "$dev_ip" 2>/dev/null || printf '%s' "$dev_ip")"; fi
++            if [ -z "$dev_ip" ] || [ -z "$dev_rate" ]; then
++                send_message "$chat" "Формат: <code>/speedset ${router_html} 192.168.1.50 64kb</code>"
++                return
++            fi
++            speed_set_limit_by_ip "$dev_ip" "$dev_rate"
++            rc=$?
++            case "$rc" in
++                0) send_message_markup "$chat" "✅ ${header} Лимит скорости установлен для <code>$(printf '%s' "$dev_ip" | escape_html)</code>: <code>$(speed_rate_label "$dev_rate" | escape_html)</code>.
++
++$(speed_device_detail_text "$dev_ip")" "$(speed_device_keyboard_json "$dev_ip")" ;;
++                3) send_message "$chat" "❌ ${header} Неверный IPv4. Пример: <code>192.168.1.50</code>." ;;
++                4) send_message "$chat" "❌ ${header} Неверная скорость. Пример: <code>64kb</code>, <code>512kb</code>, <code>1mb</code>." ;;
++                *) send_message "$chat" "❌ ${header} Ошибка установки лимита, код: <code>$rc</code>. Проверь nft: <code>nft list ruleset | grep podkop_tg_speed</code>" ;;
++            esac
++            ;;
++        /speedoff)
++            set -- $text
++            shift
++            [ "$1" = "$ROUTER_NAME" ] && shift
++            dev_ip="$1"
++            if access_valid_ipv4 "$dev_ip"; then dev_ip="$(access_normalize_ipv4 "$dev_ip" 2>/dev/null || printf '%s' "$dev_ip")"; fi
++            if [ -z "$dev_ip" ]; then
++                send_message "$chat" "Формат: <code>/speedoff ${router_html} 192.168.1.50</code>"
++                return
++            fi
++            if speed_delete_limit_by_ip "$dev_ip"; then
++                send_message_markup "$chat" "✅ ${header} Лимит скорости снят для <code>$(printf '%s' "$dev_ip" | escape_html)</code>.
++
++$(speed_device_detail_text "$dev_ip")" "$(speed_device_keyboard_json "$dev_ip")"
++            else
++                send_message "$chat" "❌ ${header} Не удалось снять лимит скорости."
++            fi
++            ;;
++        /speedapply)
++            if speed_apply; then
++                send_message_markup "$chat" "✅ ${header} Правила ограничения скорости применены.
++
++$(speed_status_text)" "$(speed_keyboard_json)"
++            else
++                send_message "$chat" "❌ ${header} Не удалось применить правила скорости. Нужен nftables. Проверь: <code>nft list ruleset | grep podkop_tg_speed</code>"
++            fi
++            ;;
+         /podkopupdate)
+             if is_panel_mode && [ -z "$arg1" ]; then
+                 send_router_select "$chat" "podkopupdate"
+@@ -4586,6 +5079,7 @@
+         if [ $((now - last_check)) -ge "$interval" ]; then
+             check_alerts
+             access_apply >/dev/null 2>&1 || true
++            speed_apply >/dev/null 2>&1 || true
+             check_daily_report
+             last_check="$now"
+         fi
+diff -ruN orig_v11011/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js release_v11012/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+--- orig_v11011/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-24 07:36:14.000000000 +0000
++++ release_v11012/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-24 20:25:52.959130124 +0000
+@@ -4,6 +4,7 @@
+ // ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ // QUIET_STATUS_V11010: LuCI fields and active/inactive status for alert quiet hours.
+ // HELP_BUTTON_OUTPUT_V11011: Help button sends text list, not only header image.
++// SPEED_LIMIT_V11012: Telegram speed limiter for static DHCP devices.
+ // OpenWrt 25 LuCI may fail with 'view.extend is not a function' if variables are placed before requires.
+ 'require view';
+ 'require form';
+@@ -12,7 +13,7 @@
+ 'require ui';
+ 'require poll';
+ 
+-var BOT_VERSION = 'v1.10.11';
++var BOT_VERSION = 'v1.10.12';
+ 
+ function serviceStatus() {
+     return fs.exec('/etc/init.d/podkop-telegram-agent', [ 'status' ]).then(function(res) {
+@@ -518,6 +519,25 @@
+         o.rmempty = false;
+         o.description = _('Создаёт архив штатной командой sysupgrade -b и отправляет его файлом в Telegram после ежедневного отчёта. Внимание: backup содержит чувствительные настройки, ключи и токены. Включайте только для доверенного чата.');
+ 
++
++        s = m.section(form.NamedSection, 'main', 'bot', _('Ограничение скорости'));
++        s.addremove = false;
++        s.anonymous = true;
++
++        o = s.option(form.Flag, 'speed_control', _('Ограничение скорости устройств'));
++        o.default = '1';
++        o.rmempty = false;
++        o.description = _('Включает Telegram-команды /speed, /speedset, /speedoff. Устройства берутся из статических DHCP-записей. Правила применяются через nft limit.');
++
++        o = s.option(form.DummyValue, '_speed_hint', _('Команды Telegram'));
++        o.rawhtml = true;
++        o.cfgvalue = function(section_id) {
++            var rn = normalizeRouterName(uci.get('podkop_tg', section_id, 'router_name') || 'openwrt');
++            return '<code>/speed ' + rn + '</code><br />' +
++                   '<code>/speedset ' + rn + ' 192.168.1.50 64kb</code><br />' +
++                   '<code>/speedoff ' + rn + ' 192.168.1.50</code>';
++        };
++
+         s = m.section(form.NamedSection, 'main', 'bot', _('Управление сервисом'));
+         s.addremove = false;
+         s.anonymous = true;
+diff -ruN orig_v11011/podkop-telegram-agent/install.sh release_v11012/podkop-telegram-agent/install.sh
+--- orig_v11011/podkop-telegram-agent/install.sh	2026-05-24 07:36:14.000000000 +0000
++++ release_v11012/podkop-telegram-agent/install.sh	2026-05-24 20:25:52.960147247 +0000
+@@ -4,6 +4,7 @@
+ # Safe for SSH install/update: preserves existing /etc/config/podkop_tg values by default.
+ # INSTALL_QUIET_STATUS_V11010: overlay update adds quiet-hours defaults without wiping token/chat_id.
+ # INSTALL_HELP_BUTTON_OUTPUT_V11011: full overlay keeps config and fixes Help text output.
++# INSTALL_SPEED_LIMIT_V11012: adds Telegram speed limiter for static DHCP devices.
+ # NO_OPKG_FIX_V2: installer works without opkg/apk when curl+jq already exist in firmware.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ 
+@@ -635,6 +636,7 @@
+     uci_set_if_empty "$CONFIG.$SECTION.ping_host" "1.1.1.1"
+     uci_set_if_empty "$CONFIG.$SECTION.foreign_hold_seconds" "90"
+     uci_set_if_empty "$CONFIG.$SECTION.device_control" "1"
++    uci_set_if_empty "$CONFIG.$SECTION.speed_control" "1"
+ 
+     uci commit "$CONFIG" || fail "uci commit $CONFIG failed"
+ }
+@@ -689,6 +691,7 @@
+     log "Quiet hours: $(uci_get "$CONFIG.$SECTION.alert_quiet_start")-$(uci_get "$CONFIG.$SECTION.alert_quiet_end") mode=$(uci_get "$CONFIG.$SECTION.alert_quiet_mode") enabled=$(uci_get "$CONFIG.$SECTION.alert_quiet_hours")"
+     log "Daily OpenWrt backup: $(uci_get "$CONFIG.$SECTION.daily_backup")"
+     log "Menu image header: $(uci_get "$CONFIG.$SECTION.header_image_enabled") at $(uci_get "$CONFIG.$SECTION.header_image_path")"
++    log "Speed limiter: $(uci_get "$CONFIG.$SECTION.speed_control")"
+     log "Bot mode: $(uci_get "$CONFIG.$SECTION.bot_mode")"
+     log "Router list: $(uci_get "$CONFIG.$SECTION.router_list")"
+     log ""
+@@ -702,6 +705,7 @@
+     log "  /diag ${router:-openwrt}"
+     log "  /report ${router:-openwrt}"
+     log "  /backup ${router:-openwrt}"
++    log "  /speed ${router:-openwrt}"
+     log "  /testreport ${router:-openwrt}"
+     log "  /donate ${router:-openwrt}"
+ }
+diff -ruN orig_v11011/podkop-telegram-agent/uninstall.sh release_v11012/podkop-telegram-agent/uninstall.sh
+--- orig_v11011/podkop-telegram-agent/uninstall.sh	2026-05-22 18:45:03.000000000 +0000
++++ release_v11012/podkop-telegram-agent/uninstall.sh	2026-05-24 20:26:29.731277803 +0000
+@@ -7,6 +7,11 @@
+ # Clear device access firewall rules created by bot.
+ if command -v nft >/dev/null 2>&1; then
+     nft delete table inet podkop_tg_access >/dev/null 2>&1 || true
++    nft delete table bridge podkop_tg_access_bridge >/dev/null 2>&1 || true
++    nft delete table netdev podkop_tg_access_ingress >/dev/null 2>&1 || true
++    nft delete table inet podkop_tg_speed >/dev/null 2>&1 || true
++    nft delete table bridge podkop_tg_speed_bridge >/dev/null 2>&1 || true
++    nft delete table netdev podkop_tg_speed_ingress >/dev/null 2>&1 || true
+ fi
+ if command -v iptables >/dev/null 2>&1; then
+     iptables -D FORWARD -j PODKOP_TG_ACCESS >/dev/null 2>&1 || true
+@@ -19,7 +24,7 @@
+ rm -f /usr/share/luci/menu.d/luci-app-podkop-tg.json
+ rm -f /usr/share/rpcd/acl.d/luci-app-podkop-tg.json
+ rm -rf /www/luci-static/resources/view/podkop-tg
+-rm -f /tmp/podkop_tg_offset /tmp/podkop_tg_last_state /tmp/podkop_tg_last_alert /tmp/podkop_tg_last_report /tmp/podkop_tg_update.lock /tmp/podkop_tg_last_update /tmp/podkop_tg_access_last
++rm -f /tmp/podkop_tg_offset /tmp/podkop_tg_last_state /tmp/podkop_tg_last_alert /tmp/podkop_tg_last_report /tmp/podkop_tg_update.lock /tmp/podkop_tg_last_update /tmp/podkop_tg_access_last /tmp/podkop_tg_speed_last
+ 
+ if [ -x /etc/init.d/rpcd ]; then
+     /etc/init.d/rpcd restart >/dev/null 2>&1 || true
