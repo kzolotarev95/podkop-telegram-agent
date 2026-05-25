@@ -1,5 +1,5 @@
 #!/bin/sh
-# REPO_ROOT_INSTALL_V12_SPEED_TC_QOS_V11014
+# REPO_ROOT_INSTALL_V13_SPEED_INDEPENDENT_V11015
 # podkop-telegram-agent one-link installer/updater from repository root.
 # Uses full overlay archive from GitHub repository root, no Releases.
 # Usage:
@@ -39,7 +39,7 @@ download() {
 have tar || fail "tar not found"
 
 log "podkop-telegram-agent installer"
-log "Marker: REPO_ROOT_INSTALL_V12_SPEED_TC_QOS_V11014"
+log "Marker: REPO_ROOT_INSTALL_V13_SPEED_INDEPENDENT_V11015"
 log "Mode: GitHub repository root, full overlay archive, no Releases"
 log "Archive URL: $BASE_URL"
 
@@ -53,6 +53,7 @@ tar -tzf "$ARCHIVE" >/tmp/podkop_tg_archive_list.$$ 2>/tmp/podkop_tg_archive_err
 }
 grep -Eq '(^|/)files/usr/bin/podkop-telegram-agent$' /tmp/podkop_tg_archive_list.$$ || fail "bad archive: files/usr/bin/podkop-telegram-agent missing"
 grep -Eq '(^|/)files/etc/init.d/podkop-telegram-agent$' /tmp/podkop_tg_archive_list.$$ || fail "bad archive: files/etc/init.d/podkop-telegram-agent missing"
+grep -Eq '(^|/)files/etc/hotplug.d/iface/99-podkop-tg-speed$' /tmp/podkop_tg_archive_list.$$ || log "WARN: speed hotplug hook missing in archive"
 grep -Eq '(^|/)files/www/luci-static/resources/view/podkop-tg/settings.js$' /tmp/podkop_tg_archive_list.$$ || fail "bad archive: LuCI settings.js missing"
 grep -Eq '(^|/)install.sh$' /tmp/podkop_tg_archive_list.$$ || fail "bad archive: install.sh missing"
 rm -f /tmp/podkop_tg_archive_list.$$ /tmp/podkop_tg_archive_err.$$
