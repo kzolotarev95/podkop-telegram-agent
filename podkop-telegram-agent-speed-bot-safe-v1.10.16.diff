@@ -1,0 +1,205 @@
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/README.md /mnt/data/work_v11016/podkop-telegram-agent/README.md
+--- /mnt/data/work_v11015/podkop-telegram-agent/README.md	2026-05-25 07:39:05.859724614 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/README.md	2026-05-25 07:47:03.214141949 +0000
+@@ -1,8 +1,8 @@
+ # podkop-telegram-agent
+ 
+-Latest fix: v1.10.15 — speed limiter made independent from Podkop/firewall nft tables; tc/SQM re-applies after reload and disables flow offload while limits are active.
++Latest fix: v1.10.16 — speed limiter made independent from Podkop/firewall nft tables; tc/SQM re-applies after reload and disables flow offload while limits are active.
+ 
+-Версия: **v1.10.15**
++Версия: **v1.10.16**
+ 
+ Telegram-модуль для Podkop/OpenWrt.
+ 
+@@ -29,7 +29,7 @@
+ - LuCI-модуль с настройками.
+ - Backup OpenWrt через `sysupgrade -b`.
+ - Управление доступом устройств / родительский контроль: блокировка статических IP по расписанию через отдельную firewall-таблицу, совместимо с OpenWrt 24/25.
+-- Ограничение скорости статических DHCP-устройств кнопками в Telegram: 64 КБ/с, 128 КБ/с, 256 КБ/с, 512 КБ/с, 1 МБ/с, 2 МБ/с. В v1.10.15 используется независимый tc/SQM-шейпер: HTB + fq_codel, upload через IFB при наличии модуля, hotplug-пере-применение после Podkop/firewall reload и отключение flow offload при активных лимитах.
++- Ограничение скорости статических DHCP-устройств кнопками в Telegram: 64 КБ/с, 128 КБ/с, 256 КБ/с, 512 КБ/с, 1 МБ/с, 2 МБ/с. В v1.10.16 используется независимый tc/SQM-шейпер: HTB + fq_codel, upload через IFB при наличии модуля, hotplug-пере-применение после Podkop/firewall reload и отключение flow offload при активных лимитах.
+ - Управление Podkop URLTest/VLESS: список ссылок из UCI, добавление/удаление, применение выбранной ссылки, возврат секции в URLTest, проверка доступности серверов по TCP.
+ 
+ ## Зависимости
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/RELEASE_NOTES.md /mnt/data/work_v11016/podkop-telegram-agent/RELEASE_NOTES.md
+--- /mnt/data/work_v11015/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-25 07:39:05.860656039 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-25 07:47:03.214628943 +0000
+@@ -1,4 +1,4 @@
+-# v1.10.15 — Independent tc/SQM speed limits
++# v1.10.16 — Independent tc/SQM speed limits
+ 
+ - Speed limits are now independent from Podkop nft/firewall tables.
+ - Added hotplug re-apply hooks after interface/firewall/Podkop-related reloads.
+@@ -6,7 +6,7 @@
+ - Service now starts explicitly as `podkop-telegram-agent run`.
+ - While speed limits are active, the bot disables software/hardware flow offload so tc limits cannot be bypassed.
+ - Obsolete nft speed limiter tables from v1.10.12/v1.10.13 are still cleaned automatically.
+-- Visible version: `Podkop Telegram Agent v1.10.15`.
++- Visible version: `Podkop Telegram Agent v1.10.16`.
+ 
+ # v1.10.14 — SQM/tc speed limiter
+ 
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/files/etc/hotplug.d/firewall/99-podkop-tg-speed /mnt/data/work_v11016/podkop-telegram-agent/files/etc/hotplug.d/firewall/99-podkop-tg-speed
+--- /mnt/data/work_v11015/podkop-telegram-agent/files/etc/hotplug.d/firewall/99-podkop-tg-speed	2026-05-25 07:38:09.301728990 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/files/etc/hotplug.d/firewall/99-podkop-tg-speed	2026-05-25 07:47:03.484229602 +0000
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-# SPEED_TC_INDEPENDENT_V11015: re-apply speed limits after network/Podkop/firewall reloads.
++# SPEED_BOT_SAFE_V11016: debounced re-apply of speed limits. Never block bot polling.
+ 
+ case "${ACTION:-}" in
+     ifup|ifupdate|add|register|reload|restart) ;;
+@@ -7,8 +7,12 @@
+ esac
+ 
+ [ -x /usr/bin/podkop-telegram-agent ] || exit 0
++LOCK=/tmp/podkop_tg_speed_hotplug.lock
++[ -e "$LOCK" ] && exit 0
++: > "$LOCK" 2>/dev/null || exit 0
+ (
+-    sleep 3
+-    /usr/bin/podkop-telegram-agent speed-apply >/tmp/podkop_tg_speed_hotplug.log 2>&1
++    sleep 5
++    /usr/bin/podkop-telegram-agent speed-apply >/tmp/podkop_tg_speed_hotplug.log 2>&1 || true
++    rm -f "$LOCK"
+ ) &
+ exit 0
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/files/etc/hotplug.d/iface/99-podkop-tg-speed /mnt/data/work_v11016/podkop-telegram-agent/files/etc/hotplug.d/iface/99-podkop-tg-speed
+--- /mnt/data/work_v11015/podkop-telegram-agent/files/etc/hotplug.d/iface/99-podkop-tg-speed	2026-05-25 07:38:09.281516407 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/files/etc/hotplug.d/iface/99-podkop-tg-speed	2026-05-25 07:47:03.461147800 +0000
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-# SPEED_TC_INDEPENDENT_V11015: re-apply speed limits after network/Podkop/firewall reloads.
++# SPEED_BOT_SAFE_V11016: debounced re-apply of speed limits. Never block bot polling.
+ 
+ case "${ACTION:-}" in
+     ifup|ifupdate|add|register|reload|restart) ;;
+@@ -7,8 +7,12 @@
+ esac
+ 
+ [ -x /usr/bin/podkop-telegram-agent ] || exit 0
++LOCK=/tmp/podkop_tg_speed_hotplug.lock
++[ -e "$LOCK" ] && exit 0
++: > "$LOCK" 2>/dev/null || exit 0
+ (
+-    sleep 3
+-    /usr/bin/podkop-telegram-agent speed-apply >/tmp/podkop_tg_speed_hotplug.log 2>&1
++    sleep 5
++    /usr/bin/podkop-telegram-agent speed-apply >/tmp/podkop_tg_speed_hotplug.log 2>&1 || true
++    rm -f "$LOCK"
+ ) &
+ exit 0
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent /mnt/data/work_v11016/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+--- /mnt/data/work_v11015/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-25 07:37:51.552655389 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-25 07:47:03.211965205 +0000
+@@ -4,9 +4,9 @@
+ # Dependencies: ash, curl, jq, uci, logread.
+ # QUIET_STATUS_V11010: quiet-hours status text shows active/inactive; default 23:00-08:00; mode queue/drop.
+ # HELP_BUTTON_OUTPUT_V11011: Help button and /help send plain chunked command list, no header-only response.
+-# SPEED_TC_INDEPENDENT_V11015: speed limiter is independent from Podkop, uses tc/HTB/fq_codel, hotplug re-apply and disables flow offload.
++# SPEED_BOT_SAFE_V11016: bot polling is protected from speed limiter; tc apply runs safely in background, hotplug is debounced.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+-BOT_VERSION="v1.10.15"
++BOT_VERSION="v1.10.16"
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+@@ -3034,7 +3034,7 @@
+ 
+ speed_firewall_clear() {
+     local iface
+-    # SPEED_TC_INDEPENDENT_V11015:
++    # SPEED_BOT_SAFE_V11016:
+     # Speed limiter is not stored in Podkop nft tables. Old nft limiter tables
+     # from v1.10.12/v1.10.13 are removed here during upgrade/startup.
+     if command -v nft >/dev/null 2>&1; then
+@@ -3131,7 +3131,7 @@
+ }
+ 
+ speed_flow_offload_disable_if_needed() {
+-    # SPEED_TC_INDEPENDENT_V11015:
++    # SPEED_BOT_SAFE_V11016:
+     # Flow offloading can bypass tc/SQM rules after Podkop or firewall reloads.
+     # While speed limits are active, disable software/hardware flow offload so
+     # traffic always goes through the shaper. We do not re-enable it automatically.
+@@ -3154,8 +3154,10 @@
+ 
+     if [ "$changed" = "1" ]; then
+         uci -q commit firewall >/dev/null 2>&1 || true
+-        /etc/init.d/firewall reload >/tmp/podkop_tg_speed_firewall_reload.log 2>&1 || true
+-        log "speed limit disabled firewall flow offloading so tc/SQM limits cannot be bypassed by Podkop/firewall offload"
++        # SPEED_BOT_SAFE_V11016: do not reload firewall from the bot main loop.
++        # Reloading firewall can trigger hotplug events and temporarily break Telegram polling.
++        # The setting is committed; user can reload firewall manually if needed.
++        log "speed limit disabled firewall flow offloading in UCI; firewall reload skipped to keep bot online"
+     fi
+ }
+ 
+@@ -3264,7 +3266,7 @@
+     state="$(awk -F'|' 'NF && $1 != "" { if (!seen[$1]++) printf "%s=%s ", $1, $3 }' "$tmp" 2>/dev/null | sed 's/[[:space:]]*$//')"
+     old="$(cat "$SPEED_LAST_FILE" 2>/dev/null)"
+     if [ "$state" != "$old" ]; then
+-        log "speed limit applied backend=tc_htb_fq_codel_independent rules=${state:-none}"
++        log "speed limit applied backend=tc_htb_fq_codel_safe rules=${state:-none}"
+         printf '%s\n' "$state" > "$SPEED_LAST_FILE"
+     fi
+     rm -f "$tmp"
+@@ -3304,12 +3306,12 @@
+             speed_conntrack_cleanup_file "$tmp" >/dev/null 2>&1 || true
+             date +%s > "$SPEED_LAST_APPLY_FILE" 2>/dev/null || true
+             if [ "$before_present" != "0" ]; then
+-                log "speed watchdog refreshed backend=tc_htb_fq_codel_independent reason=missing_qdisc"
++                log "speed watchdog refreshed backend=tc_htb_fq_codel_safe reason=missing_qdisc"
+             else
+-                log "speed watchdog refreshed backend=tc_htb_fq_codel_independent reason=periodic"
++                log "speed watchdog refreshed backend=tc_htb_fq_codel_safe reason=periodic"
+             fi
+         else
+-            log "speed watchdog failed backend=tc_htb_fq_codel_independent rc=$rc; install tc/ifb packages if needed"
++            log "speed watchdog failed backend=tc_htb_fq_codel_safe rc=$rc; install tc/ifb packages if needed"
+         fi
+     fi
+ 
+@@ -5249,7 +5251,8 @@
+     send_boot_notification
+     init_podkop_lifecycle_marker
+     access_apply >/dev/null 2>&1 || true
+-    speed_apply >/dev/null 2>&1 || true
++    # SPEED_BOT_SAFE_V11016: never block Telegram polling on tc/SQM setup.
++    ( speed_apply >/tmp/podkop_tg_speed_boot_apply.log 2>&1 || true ) &
+     last_check=0
+     last_speed_watchdog=0
+     while true; do
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js /mnt/data/work_v11016/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+--- /mnt/data/work_v11015/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-25 07:38:00.517076704 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-25 07:47:03.212920374 +0000
+@@ -4,7 +4,7 @@
+ // ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ // QUIET_STATUS_V11010: LuCI fields and active/inactive status for alert quiet hours.
+ // HELP_BUTTON_OUTPUT_V11011: Help button sends text list, not only header image.
+-// SPEED_TC_INDEPENDENT_V11015: speed limiter is independent from Podkop, uses tc/HTB/fq_codel, hotplug re-apply and disables flow offload.
++// SPEED_BOT_SAFE_V11016: bot polling protected from speed limiter, tc apply safe/background, hotplug debounced.
+ // OpenWrt 25 LuCI may fail with 'view.extend is not a function' if variables are placed before requires.
+ 'require view';
+ 'require form';
+@@ -13,7 +13,7 @@
+ 'require ui';
+ 'require poll';
+ 
+-var BOT_VERSION = 'v1.10.15';
++var BOT_VERSION = 'v1.10.16';
+ 
+ function serviceStatus() {
+     return fs.exec('/etc/init.d/podkop-telegram-agent', [ 'status' ]).then(function(res) {
+diff -ruN /mnt/data/work_v11015/podkop-telegram-agent/install.sh /mnt/data/work_v11016/podkop-telegram-agent/install.sh
+--- /mnt/data/work_v11015/podkop-telegram-agent/install.sh	2026-05-25 07:38:32.597396455 +0000
++++ /mnt/data/work_v11016/podkop-telegram-agent/install.sh	2026-05-25 07:47:03.213483639 +0000
+@@ -5,7 +5,7 @@
+ # INSTALL_QUIET_STATUS_V11010: overlay update adds quiet-hours defaults without wiping token/chat_id.
+ # INSTALL_HELP_BUTTON_OUTPUT_V11011: full overlay keeps config and fixes Help text output.
+ # INSTALL_SPEED_LIMIT_V11012: adds Telegram speed limiter for static DHCP devices.
+-# INSTALL_SPEED_INDEPENDENT_V11015: installs tc/SQM speed limiter hotplug hooks independent from Podkop/firewall nft tables.
++# INSTALL_SPEED_BOT_SAFE_V11016: installs safe/debounced tc speed limiter hooks without breaking bot polling.
+ # NO_OPKG_FIX_V2: installer works without opkg/apk when curl+jq already exist in firmware.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ 
