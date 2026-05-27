@@ -1,0 +1,155 @@
+diff -ruN inner_orig/podkop-telegram-agent/README.md inner_new/podkop-telegram-agent/README.md
+--- inner_orig/podkop-telegram-agent/README.md	2026-05-25 07:39:05.000000000 +0000
++++ inner_new/podkop-telegram-agent/README.md	2026-05-27 05:51:11.562540767 +0000
+@@ -1,8 +1,8 @@
+ # podkop-telegram-agent
+ 
+-Latest fix: v1.10.15 — speed limiter made independent from Podkop/firewall nft tables; tc/SQM re-applies after reload and disables flow offload while limits are active.
++Latest fix: v1.10.20 — LuCI page now has a collapsible manual button near agent status with clickable BotFather/userinfobot/GitHub links.
+ 
+-Версия: **v1.10.15**
++Версия: **v1.10.20**
+ 
+ Telegram-модуль для Podkop/OpenWrt.
+ 
+@@ -26,10 +26,10 @@
+ - Уведомления о WAN/Internet DOWN, восстановлении, reboot, Podkop/sing-box событиях.
+ - Очередь уведомлений: если интернет упал и Telegram недоступен, уведомления уйдут после восстановления.
+ - Картинка-шапка меню: `/etc/podkop-telegram-agent/header.jpg`.
+-- LuCI-модуль с настройками.
++- LuCI-модуль с настройками и раскрывающимся мануалом по Telegram-боту.
+ - Backup OpenWrt через `sysupgrade -b`.
+ - Управление доступом устройств / родительский контроль: блокировка статических IP по расписанию через отдельную firewall-таблицу, совместимо с OpenWrt 24/25.
+-- Ограничение скорости статических DHCP-устройств кнопками в Telegram: 64 КБ/с, 128 КБ/с, 256 КБ/с, 512 КБ/с, 1 МБ/с, 2 МБ/с. В v1.10.15 используется независимый tc/SQM-шейпер: HTB + fq_codel, upload через IFB при наличии модуля, hotplug-пере-применение после Podkop/firewall reload и отключение flow offload при активных лимитах.
++- Ограничение скорости статических DHCP-устройств кнопками в Telegram: 64 КБ/с, 128 КБ/с, 256 КБ/с, 512 КБ/с, 1 МБ/с, 2 МБ/с. В v1.10.20 используется независимый tc/SQM-шейпер: HTB + fq_codel, upload через IFB при наличии модуля, hotplug-пере-применение после Podkop/firewall reload и отключение flow offload при активных лимитах.
+ - Управление Podkop URLTest/VLESS: список ссылок из UCI, добавление/удаление, применение выбранной ссылки, возврат секции в URLTest, проверка доступности серверов по TCP.
+ 
+ ## Зависимости
+diff -ruN inner_orig/podkop-telegram-agent/RELEASE_NOTES.md inner_new/podkop-telegram-agent/RELEASE_NOTES.md
+--- inner_orig/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-25 07:39:05.000000000 +0000
++++ inner_new/podkop-telegram-agent/RELEASE_NOTES.md	2026-05-27 05:51:11.562888999 +0000
+@@ -1,3 +1,10 @@
++# v1.10.20 — LuCI manual button near agent status
++
++- Added a collapsible `📘 Мануал / как пользоваться ботом` block in LuCI near `Статус агента`.
++- Added clickable links for `@BotFather`, `@userinfobot`, and the GitHub project page.
++- The status poll now updates only the status text, so an opened manual block does not collapse on every auto-refresh.
++- Visible version: `Podkop Telegram Agent v1.10.20`.
++
+ # v1.10.15 — Independent tc/SQM speed limits
+ 
+ - Speed limits are now independent from Podkop nft/firewall tables.
+diff -ruN inner_orig/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent inner_new/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent
+--- inner_orig/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-25 07:37:51.000000000 +0000
++++ inner_new/podkop-telegram-agent/files/usr/bin/podkop-telegram-agent	2026-05-27 05:51:11.561279132 +0000
+@@ -6,7 +6,7 @@
+ # HELP_BUTTON_OUTPUT_V11011: Help button and /help send plain chunked command list, no header-only response.
+ # SPEED_TC_INDEPENDENT_V11015: speed limiter is independent from Podkop, uses tc/HTB/fq_codel, hotplug re-apply and disables flow offload.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+-BOT_VERSION="v1.10.15"
++BOT_VERSION="v1.10.20"
+ 
+ CONFIG="podkop_tg"
+ SECTION="main"
+diff -ruN inner_orig/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js inner_new/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js
+--- inner_orig/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-25 07:38:00.000000000 +0000
++++ inner_new/podkop-telegram-agent/files/www/luci-static/resources/view/podkop-tg/settings.js	2026-05-27 05:51:11.561965296 +0000
+@@ -5,6 +5,7 @@
+ // QUIET_STATUS_V11010: LuCI fields and active/inactive status for alert quiet hours.
+ // HELP_BUTTON_OUTPUT_V11011: Help button sends text list, not only header image.
+ // SPEED_TC_INDEPENDENT_V11015: speed limiter is independent from Podkop, uses tc/HTB/fq_codel, hotplug re-apply and disables flow offload.
++// LUCI_MANUAL_TOGGLE_V11020: add collapsible Telegram bot manual near agent status.
+ // OpenWrt 25 LuCI may fail with 'view.extend is not a function' if variables are placed before requires.
+ 'require view';
+ 'require form';
+@@ -13,7 +14,7 @@
+ 'require ui';
+ 'require poll';
+ 
+-var BOT_VERSION = 'v1.10.15';
++var BOT_VERSION = 'v1.10.20';
+ 
+ function serviceStatus() {
+     return fs.exec('/etc/init.d/podkop-telegram-agent', [ 'status' ]).then(function(res) {
+@@ -280,6 +281,39 @@
+     return start + '-' + end + ', ' + quietModeHuman(mode) + ', ' + (quietActiveNow(start, end) ? _('сейчас активно') : _('сейчас не активно'));
+ }
+ 
++
++function agentStatusHtml(isRunning) {
++    return isRunning
++        ? '<strong style="color:green">ЗАПУЩЕН</strong>'
++        : '<strong style="color:red">ОСТАНОВЛЕН</strong>';
++}
++
++function agentManualToggleHtml() {
++    return '' +
++        '<details class="podkop-tg-manual" style="display:inline-block; margin-left:.75em; vertical-align:middle;">' +
++            '<summary class="btn cbi-button cbi-button-action" style="display:inline-block; cursor:pointer; user-select:none; padding:4px 10px;">📘 Мануал / как пользоваться ботом</summary>' +
++            '<div style="margin-top:.75em; max-width:760px; padding:12px 14px; border:1px solid #d8d8d8; border-radius:8px; background:rgba(127,127,127,.08); line-height:1.45;">' +
++                '<div style="font-weight:700; margin-bottom:.45em;">Быстрый старт Telegram-бота</div>' +
++                '<ol style="margin:.35em 0 .75em 1.4em; padding:0;">' +
++                    '<li>Открой <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a>, отправь <code>/newbot</code>, задай имя и username бота.</li>' +
++                    '<li>Скопируй выданный token вида <code>123456789:AA...</code> и вставь его в поле <b>Токен Telegram-бота</b>.</li>' +
++                    '<li>Поле <b>User ID администратора</b> можно оставить пустым: сохрани настройки, перезапусти агента и отправь своему боту <code>/start</code>. Также ID можно узнать через <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer">@userinfobot</a> или команду <code>/myid</code>.</li>' +
++                    '<li>Нажми <b>Сохранить и применить</b>, затем <b>Перезапустить агент</b>. Если статус стал <b>ЗАПУЩЕН</b>, напиши боту <code>/help</code>.</li>' +
++                '</ol>' +
++                '<div style="font-weight:700; margin:.45em 0 .25em;">Основные команды</div>' +
++                '<div><code>/start</code> — подключить чат, <code>/help</code> — помощь, <code>/myid</code> — узнать свой User ID, <code>/status</code> — статус, <code>/diag</code> — диагностика, <code>/logs</code> — логи.</div>' +
++                '<div style="margin-top:.55em; font-size:12px; opacity:.82;">Подробная инструкция и обновления: <a href="https://github.com/kzolotarev95/podkop-telegram-agent" target="_blank" rel="noopener noreferrer">GitHub podkop-telegram-agent</a>. Не публикуй настоящий token в чатах и репозиториях.</div>' +
++            '</div>' +
++        '</details>';
++}
++
++function agentStateFieldHtml(isRunning) {
++    return '<div class="podkop-tg-state-line" style="display:flex; align-items:flex-start; gap:.25em; flex-wrap:wrap;">' +
++        '<span class="podkop-tg-status-text" style="display:inline-block; padding-top:5px;">' + agentStatusHtml(isRunning) + '</span>' +
++        agentManualToggleHtml() +
++    '</div>';
++}
++
+ return view.extend({
+     load: function() {
+         return Promise.all([
+@@ -319,9 +353,7 @@
+         o = s.option(form.DummyValue, '_state', _('Статус агента'));
+         o.rawhtml = true;
+         o.cfgvalue = function() {
+-            return running
+-                ? '<strong style="color:green">ЗАПУЩЕН</strong>'
+-                : '<strong style="color:red">ОСТАНОВЛЕН</strong>';
++            return agentStateFieldHtml(running);
+         };
+ 
+         o = s.option(form.Flag, 'enabled', _('Включить агента'));
+@@ -573,11 +605,14 @@
+ 
+         poll.add(function() {
+             return serviceStatus().then(function(isRunning) {
+-                var node = document.querySelector('[data-name="_state"] .cbi-value-field');
+-                if (node)
+-                    node.innerHTML = isRunning
+-                        ? '<strong style="color:green">ЗАПУЩЕН</strong>'
+-                        : '<strong style="color:red">ОСТАНОВЛЕН</strong>';
++                var statusNode = document.querySelector('[data-name="_state"] .podkop-tg-status-text');
++                if (statusNode)
++                    statusNode.innerHTML = agentStatusHtml(isRunning);
++                else {
++                    var node = document.querySelector('[data-name="_state"] .cbi-value-field');
++                    if (node)
++                        node.innerHTML = agentStateFieldHtml(isRunning);
++                }
+             });
+         });
+ 
+diff -ruN inner_orig/podkop-telegram-agent/install.sh inner_new/podkop-telegram-agent/install.sh
+--- inner_orig/podkop-telegram-agent/install.sh	2026-05-25 07:38:32.000000000 +0000
++++ inner_new/podkop-telegram-agent/install.sh	2026-05-27 05:51:11.563233042 +0000
+@@ -6,6 +6,7 @@
+ # INSTALL_HELP_BUTTON_OUTPUT_V11011: full overlay keeps config and fixes Help text output.
+ # INSTALL_SPEED_LIMIT_V11012: adds Telegram speed limiter for static DHCP devices.
+ # INSTALL_SPEED_INDEPENDENT_V11015: installs tc/SQM speed limiter hotplug hooks independent from Podkop/firewall nft tables.
++# INSTALL_LUCI_MANUAL_TOGGLE_V11020: ships LuCI collapsible manual near agent status.
+ # NO_OPKG_FIX_V2: installer works without opkg/apk when curl+jq already exist in firmware.
+ # ROUTER_NAME_HARDFIX_V129: preserve router names and repair uppercase-to-underscore corruption.
+ 

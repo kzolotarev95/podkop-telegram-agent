@@ -1,5 +1,5 @@
 #!/bin/sh
-# REPO_ROOT_INSTALL_V13_SPEED_INDEPENDENT_V11015
+# REPO_ROOT_INSTALL_V14_LUCI_MANUAL_TOGGLE_V11020
 # podkop-telegram-agent one-link installer/updater from repository root.
 # Uses full overlay archive from GitHub repository root, no Releases.
 # Usage:
@@ -39,7 +39,7 @@ download() {
 have tar || fail "tar not found"
 
 log "podkop-telegram-agent installer"
-log "Marker: REPO_ROOT_INSTALL_V13_SPEED_INDEPENDENT_V11015"
+log "Marker: REPO_ROOT_INSTALL_V14_LUCI_MANUAL_TOGGLE_V11020"
 log "Mode: GitHub repository root, full overlay archive, no Releases"
 log "Archive URL: $BASE_URL"
 
