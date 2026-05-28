@@ -3,7 +3,7 @@
 
 ## Podkop Telegram Agent v1.10.20
 
-Фикс: в LuCI добавлена раскрывающаяся кнопка «Мануал / как пользоваться ботом» рядом со статусом агента.
+В LuCI добавлена раскрывающаяся кнопка «Мануал / как пользоваться ботом» рядом со статусом агента.
 
 ## Установка в один клик
 
@@ -37,6 +37,7 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 - 👨‍👩‍👧 родительский контроль устройств;
 - 🔗 управление URLTest / VLESS ссылками;
 - 📡 проверка доступности proxy-ссылок;
+- 🚦 Лимит устройств;
 - ✅ включение URLTest из Telegram;
 - ♻️ применение выбранной URLTest-ссылки;
 - ⬆️ обновление Podkop;
@@ -59,6 +60,7 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 - 📦 Backup OpenWrt
 - 👨‍👩‍👧 Родительский Контроль
 - 🔗 URLTest / VLESS
+- 🚦 Лимит устройств
 - ⬆️ Обновить Podkop
 - 🤖 Обновить Бота
 - ❓ Помощь
