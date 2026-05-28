@@ -1,6 +1,3 @@
-<img width="2172" height="724" alt="0b31a5f4-f61b-43de-9567-c8fdcf2333f5" src="https://github.com/user-attachments/assets/2e6c8bd0-0319-4265-acb3-4eacad746597" />
-
-
 ## Podkop Telegram Agent v1.10.20
 
 В LuCI добавлена раскрывающаяся кнопка «Мануал / как пользоваться ботом» рядом со статусом агента.
@@ -20,7 +17,9 @@ wget -O- https://raw.githubusercontent.com/kzolotarev95/podkop-telegram-agent/ma
 > 
 > ## [NetHaven VPN Обсуждение ](https://t.me/+LZDsQJhUfcNhYWEy)
 
-<img width="1920" height="3158" alt="mSdqBmGcvZ" src="https://github.com/user-attachments/assets/a66e9324-ed35-4871-a00f-077a9f3cbaee" />
+
+<img width="1920" height="3436" alt="tgpg" src="https://github.com/user-attachments/assets/58fe5f8e-c9b4-40e5-beae-5b2f60ce987d" />
+
 
 
 
@@ -181,3 +180,4 @@ OpenWrt 24.x
 OpenWrt 25.x
 Podkop
 sing-box
+
